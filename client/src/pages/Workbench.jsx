@@ -33,7 +33,7 @@ export default function Workbench() {
   const navigate = useNavigate();
 
   // Selected state
-  const [videos] = useState(VERIFIED_HLS_STREAMS);
+  const [videos, setVideos] = useState(VERIFIED_HLS_STREAMS);
   const [selectedVideo, setSelectedVideo] = useState(VERIFIED_HLS_STREAMS[0]);
   const [selectedProfile, setSelectedProfile] = useState(NETWORK_PROFILES[0]);
   const [benchmarkDuration, setBenchmarkDuration] = useState(DEFAULT_BENCHMARK_DURATION_SEC);

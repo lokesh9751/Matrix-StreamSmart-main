@@ -17,7 +17,7 @@ import {
 import api from '../services/api';
 
 // ── Generic Modal form ─────────────────────────────────────────────────────
-function Modal({ title, icon: Icon, fields, values, onChange, onSave, onClose, saving }) {
+function Modal({ title, icon: Icon, fields, values, onChange, onSave, onClose, saving, onFileSelect, saveLabel }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -31,6 +31,17 @@ function Modal({ title, icon: Icon, fields, values, onChange, onSave, onClose, s
           </button>
         </div>
         <div className="modal-body">
+          {onFileSelect && (
+            <div className="form-group">
+              <label className="form-label">Video File</label>
+              <input
+                className="form-control"
+                type="file"
+                accept="video/*"
+                onChange={e => onFileSelect(e.target.files?.[0])}
+              />
+            </div>
+          )}
           {fields.map(f => (
             <div className="form-group" key={f.key}>
               <label className="form-label">{f.label}</label>
@@ -57,7 +68,7 @@ function Modal({ title, icon: Icon, fields, values, onChange, onSave, onClose, s
             Cancel
           </button>
           <button className="btn btn-primary" onClick={onSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Configuration'}
+            {saving ? 'Saving...' : (saveLabel || 'Save Configuration')}
           </button>
         </div>
       </div>
@@ -154,8 +165,17 @@ export default function AdminConfig() {
         }
       } else {
         if (modal.mode === 'add') {
-          await api.createVideo(modal.values);
-          showNotice('Video sample added successfully');
+          if (modal.file) {
+            const formData = new FormData();
+            formData.append('video', modal.file);
+            formData.append('title', modal.values.title || modal.file.name.replace(/\.[^/.]+$/, ''));
+            formData.append('availableTiers', modal.values.availableTiers || '240p,360p,480p,720p,1080p');
+            await api.uploadVideo(formData);
+            showNotice('Video uploaded to Cloudinary and added to catalog');
+          } else {
+            await api.createVideo(modal.values);
+            showNotice('Video sample added successfully');
+          }
         } else {
           await api.updateVideo(modal.id, modal.values);
           showNotice('Video sample updated successfully');
@@ -480,12 +500,18 @@ export default function AdminConfig() {
             modal.type === 'profile' ? 'Network Profile' : 'Video Sample'
           }`}
           icon={modal.type === 'profile' ? Server : Film}
-          fields={modal.type === 'profile' ? PROFILE_FIELDS : VIDEO_FIELDS}
+          fields={modal.type === 'profile' ? PROFILE_FIELDS : (modal.mode === 'add' ? [{ key: 'title', label: 'Video Title', placeholder: 'e.g. 4K Nature Benchmark Stream' }] : VIDEO_FIELDS)}
+          saveLabel={modal.type === 'video' && modal.mode === 'add' ? 'Upload Video' : undefined}
           values={modal.values}
           onChange={handleModalChange}
           onSave={handleSave}
           onClose={() => setModal(null)}
           saving={saving}
+          onFileSelect={modal.type === 'video' && modal.mode === 'add' ? (file) => setModal(m => ({
+            ...m,
+            file,
+            values: { ...m.values, title: m.values.title || file?.name.replace(/\.[^/.]+$/, '') }
+          })) : null}
         />
       )}
     </div>

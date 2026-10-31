@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
+const fs      = require('fs');
 
 const db               = require('./config/db');
 const authRoutes       = require('./routes/authRoutes');
@@ -9,10 +10,13 @@ const workbenchRoutes  = require('./routes/workbenchRoutes');
 const simulatorRoutes  = require('./routes/simulatorRoutes');
 const analyticsRoutes  = require('./routes/analyticsRoutes');
 const adminRoutes      = require('./routes/adminRoutes');
-
-const fs = require('fs');
+const videoRoutes      = require('./routes/videoRoutes');
 
 const app  = express();
+
+// Configure EJS view engine for benchmark gallery & server-side rendering
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 const clientDistPath = path.join(__dirname, 'client/dist');
 const hasClientDist = fs.existsSync(clientDistPath);
@@ -22,8 +26,8 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Serve compiled frontend assets when available
 if (hasClientDist) {
@@ -51,6 +55,8 @@ app.get('/', (req, res) => {
     service: 'StreamSmart – Smart Video Streaming Optimization & Benchmarking Platform',
     version: '1.0.0',
     status: 'operational',
+    database: 'MongoDB (Mongoose)',
+    cdn: 'Cloudinary Adaptive HLS',
     apiBase: '/api',
     documentation: 'See README for architecture and API contracts',
     routes: {
@@ -59,7 +65,8 @@ app.get('/', (req, res) => {
       simulator: '/api/simulator',
       analytics: '/api/analytics',
       admin:     '/api/admin',
-      auth:      '/api/auth'
+      auth:      '/api/auth',
+      video:     '/api/video'
     }
   });
 });
@@ -70,8 +77,11 @@ app.get('/api', (_req, res) => {
     success: true,
     service: 'StreamSmart REST API',
     version: '1.0.0',
+    database: 'MongoDB (Mongoose)',
     endpoints: {
       health:                'GET  /api/health',
+      videoUpload:           'POST /api/video/upload',
+      videoStream:           'GET  /api/video/stream/:id',
       videos:                'GET  /api/workbench/videos',
       profiles:              'GET  /api/workbench/profiles',
       createSession:         'POST /api/workbench/sessions',
@@ -101,15 +111,19 @@ app.get('/api', (_req, res) => {
 // Convenience health aliases
 app.get('/health', (_req, res) => res.redirect('/api/health'));
 
-// Health check endpoint (verifies MySQL database connectivity & tables)
+// Health check endpoint (verifies MongoDB database connectivity & collections)
 app.get('/api/health', async (_req, res) => {
   let dbStatus = 'disconnected';
-  let tables = [];
+  let collections = [];
 
   try {
-    const [rows] = await db.query('SHOW TABLES');
-    dbStatus = 'connected';
-    tables = rows.map(r => Object.values(r)[0]);
+    if (db.mongoose.connection.readyState === 1) {
+      dbStatus = 'connected';
+      const colList = await db.mongoose.connection.db.listCollections().toArray();
+      collections = colList.map(c => c.name);
+    } else {
+      dbStatus = 'degraded';
+    }
   } catch (err) {
     dbStatus = `error: ${err.message}`;
   }
@@ -120,12 +134,18 @@ app.get('/api/health', async (_req, res) => {
     status: isHealthy ? 'ok' : 'degraded',
     service: 'StreamSmart API',
     database: {
+      type: 'mongodb',
       status: dbStatus,
       name: db.DB_CONFIG.database,
-      host: db.DB_CONFIG.host,
-      port: db.DB_CONFIG.port,
-      tablesCount: tables.length,
-      tables
+      collectionsCount: collections.length,
+      collections,
+      // Backwards-compatible aliases for legacy health monitors
+      tablesCount: collections.length,
+      tables: collections
+    },
+    cloudinary: {
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME ? 'configured' : 'not_configured',
+      configured: Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY)
     },
     timestamp: new Date().toISOString(),
     version: '1.0.0'
@@ -133,11 +153,19 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // ── Friendly Path Aliases (prevent common shortcut 404s) ──────────────────────
-app.get('/api/videos',   (req, res, next) => { req.url = '/videos';   workbenchRoutes(req, res, next); });
-app.get('/api/profiles', (req, res, next) => { req.url = '/profiles'; workbenchRoutes(req, res, next); });
 app.get('/api/history',  (req, res, next) => { req.url = '/history';  analyticsRoutes(req, res, next); });
 app.get('/api/summary',  (req, res, next) => { req.url = '/summary';  analyticsRoutes(req, res, next); });
 app.get('/api/report/:id', (req, res, next) => { req.url = `/sessions/${req.params.id}/report`; analyticsRoutes(req, res, next); });
+
+// ── EJS Video Showcase & Benchmark Routes ──────────────────────────────────
+app.get('/videos', (req, res, next) => {
+  req.url = '/';
+  videoRoutes(req, res, next);
+});
+app.get('/benchmark', (req, res, next) => {
+  req.url = '/';
+  videoRoutes(req, res, next);
+});
 
 // ── Core API Route Groups ───────────────────────────────────────────────────
 app.use('/api/auth',       authRoutes);
@@ -145,11 +173,13 @@ app.use('/api/workbench',  workbenchRoutes);
 app.use('/api/simulator',  simulatorRoutes);
 app.use('/api/analytics',  analyticsRoutes);
 app.use('/api/admin',      adminRoutes);
+app.use('/api/video',      videoRoutes);
+app.use('/api/videos',     videoRoutes);
 
 // SPA client-side fallback: serve index.html for all non-API GET requests
 if (hasClientDist) {
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path === '/health') {
+    if (req.path.startsWith('/api') || req.path === '/health' || req.path === '/videos' || req.path === '/benchmark') {
       return next();
     }
     res.sendFile(path.join(clientDistPath, 'index.html'));
@@ -191,7 +221,7 @@ function listenWithFallback(portToTry, isFallback = false) {
     console.log(`   Health Check: http://localhost:${portToTry}/api/health`);
     console.log(`   API Index:    http://localhost:${portToTry}/api`);
     if (!isFallback) {
-      console.log(`   MySQL Database: connected to '${db.DB_CONFIG?.database || 'streamsmart_db'}'\n`);
+      console.log(`   MongoDB Database: connected to '${db.DB_CONFIG?.database || 'streamsmart_db'}'\n`);
     } else {
       console.log('');
     }
@@ -210,17 +240,16 @@ function listenWithFallback(portToTry, isFallback = false) {
 
 async function startServer() {
   try {
-    console.log('🔄 Initializing database and verifying MySQL connection...');
+    console.log('🔄 Initializing database and verifying MongoDB connection...');
     await db.initializeAndConnect();
     listenWithFallback(PORT, false);
   } catch (err) {
-    console.warn('\n⚠️ Warning: MySQL database unavailable during server startup.');
+    console.warn('\n⚠️ Warning: MongoDB unavailable during server startup.');
     console.warn(`   Error: ${err.message}`);
     console.warn('   Running with transparent In-Memory Fallback Storage.\n');
     listenWithFallback(PORT, true);
   }
 }
-
 
 // Start server when executed directly
 if (require.main === module) {

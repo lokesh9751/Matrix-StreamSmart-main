@@ -1,107 +1,245 @@
-const db = require('../config/db');
+/**
+ * models/TestSession.js – Mongoose Test Session Model
+ *
+ * Manages benchmark execution sessions, tracking network scenarios,
+ * chosen video streams, and session lifecycle statuses.
+ */
+
+const mongoose = require('mongoose');
 const fallback = require('../utils/inMemoryFallbackStore');
+const Video = require('./Video');
+const NetworkProfile = require('./NetworkProfile');
+const User = require('./User');
+
+const testSessionSchema = new mongoose.Schema(
+  {
+    session_id: {
+      type: Number,
+      unique: true,
+      index: true
+    },
+    user_id: {
+      type: Number,
+      default: 1
+    },
+    video_id: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
+    profile_id: {
+      type: Number,
+      default: null
+    },
+    sim_bandwidth_kbps: {
+      type: Number,
+      required: true
+    },
+    sim_latency_ms: {
+      type: Number,
+      required: true
+    },
+    sim_cache_hit_prob: {
+      type: Number,
+      required: true
+    },
+    measurement_mode: {
+      type: String,
+      enum: ['SIMULATED', 'REAL_BROWSER'],
+      default: 'SIMULATED'
+    },
+    test_duration_sec: {
+      type: Number,
+      default: 30
+    },
+    status: {
+      type: String,
+      enum: ['running', 'completed', 'stopped'],
+      default: 'running'
+    },
+    video_title: {
+      type: String,
+      default: ''
+    },
+    stream_url: {
+      type: String,
+      default: ''
+    },
+    profile_name: {
+      type: String,
+      default: ''
+    },
+    username: {
+      type: String,
+      default: ''
+    },
+    created_at: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+  }
+);
+
+testSessionSchema.pre('save', function (next) {
+  if (!this.session_id) {
+    this.session_id = Math.floor(Date.now() % 10000000);
+  }
+  next();
+});
+
+const TestSessionModel = mongoose.models.TestSession || mongoose.model('TestSession', testSessionSchema);
 
 class TestSession {
-  static async create({ userId, videoId, profileId, simBandwidthKbps, simLatencyMs, simCacheHitProb,
-                         measurementMode = 'SIMULATED', testDurationSec = 30 }) {
-    try {
-      const [result] = await db.execute(
-        `INSERT INTO test_sessions
-         (user_id, video_id, profile_id, sim_bandwidth_kbps, sim_latency_ms, sim_cache_hit_prob,
-          measurement_mode, test_duration_sec, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running')`,
-        [userId || null, videoId || null, profileId || null,
-         simBandwidthKbps, simLatencyMs, simCacheHitProb,
-         measurementMode, testDurationSec]
-      );
-      return { sessionId: result.insertId };
-    } catch (err) {
-      console.warn('[TestSession.create] MySQL unavailable, using fallback store:', err.code || err.message);
-      const s = fallback.createSession({
-        userId, videoId, profileId, simBandwidthKbps, simLatencyMs, simCacheHitProb,
-        measurementMode, testDurationSec
-      });
-      return { sessionId: s.session_id };
+  static get model() {
+    return TestSessionModel;
+  }
+
+  static async create({
+    userId, videoId, profileId, simBandwidthKbps, simLatencyMs, simCacheHitProb,
+    measurementMode = 'SIMULATED', testDurationSec = 30
+  }) {
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const session_id = Math.floor(Date.now() % 10000000);
+
+        // Populate metadata snapshots
+        let video_title = '';
+        let stream_url = '';
+        let profile_name = '';
+        let username = '';
+
+        if (videoId) {
+          const v = await Video.findByIdOrLegacy(videoId);
+          if (v) {
+            video_title = v.title || '';
+            stream_url = v.stream_url || v.hlsPlaylistUrl || '';
+          }
+        }
+        if (profileId) {
+          const p = await NetworkProfile.findById(profileId);
+          if (p) profile_name = p.profile_name || '';
+        }
+        if (userId) {
+          const u = await User.findById(userId);
+          if (u) username = u.username || '';
+        }
+
+        const session = await TestSessionModel.create({
+          session_id,
+          user_id: userId || 1,
+          video_id: videoId || null,
+          profile_id: profileId || null,
+          sim_bandwidth_kbps: simBandwidthKbps,
+          sim_latency_ms: simLatencyMs,
+          sim_cache_hit_prob: simCacheHitProb,
+          measurement_mode: measurementMode,
+          test_duration_sec: testDurationSec,
+          status: 'running',
+          video_title,
+          stream_url,
+          profile_name,
+          username
+        });
+
+        return { sessionId: session.session_id };
+      } catch (err) {
+        console.warn('[TestSession.create] MongoDB error, using fallback store:', err.message);
+      }
     }
+
+    const s = fallback.createSession({
+      userId, videoId, profileId, simBandwidthKbps, simLatencyMs, simCacheHitProb,
+      measurementMode, testDurationSec
+    });
+    return { sessionId: s.session_id };
   }
 
   static async findAll({ limit = 50, offset = 0, profileId } = {}) {
-    try {
-      let query = `
-        SELECT
-          ts.*,
-          vs.title AS video_title,
-          np.profile_name,
-          u.username
-        FROM test_sessions ts
-        LEFT JOIN video_samples vs  ON ts.video_id  = vs.video_id
-        LEFT JOIN network_profiles np ON ts.profile_id = np.profile_id
-        LEFT JOIN users u ON ts.user_id = u.user_id
-      `;
-      const params = [];
-      if (profileId) {
-        query += ' WHERE ts.profile_id = ?';
-        params.push(profileId);
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const filter = {};
+        if (profileId) filter.profile_id = Number(profileId);
+
+        const rows = await TestSessionModel.find(filter)
+          .sort({ created_at: -1, createdAt: -1 })
+          .skip(parseInt(offset, 10))
+          .limit(parseInt(limit, 10))
+          .lean();
+
+        if (rows && rows.length > 0) {
+          return rows.map(r => ({
+            ...r,
+            sessionId: r.session_id
+          }));
+        }
+      } catch (err) {
+        console.warn('[TestSession.findAll] MongoDB error, using fallback store:', err.message);
       }
-      query += ' ORDER BY ts.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), parseInt(offset));
-      const [rows] = await db.execute(query, params);
-      return rows;
-    } catch (err) {
-      console.warn('[TestSession.findAll] MySQL unavailable, using fallback store:', err.code || err.message);
-      let list = fallback.getSessions();
-      if (profileId) {
-        list = list.filter(s => s.profile_id === Number(profileId));
-      }
-      return list.slice(offset, offset + limit);
     }
+
+    let list = fallback.getSessions();
+    if (profileId) {
+      list = list.filter(s => s.profile_id === Number(profileId));
+    }
+    return list.slice(offset, offset + limit);
   }
 
   static async findById(sessionId) {
-    try {
-      const [rows] = await db.execute(
-        `SELECT ts.*, vs.title AS video_title, vs.stream_url,
-                np.profile_name, u.username
-         FROM test_sessions ts
-         LEFT JOIN video_samples vs    ON ts.video_id  = vs.video_id
-         LEFT JOIN network_profiles np ON ts.profile_id = np.profile_id
-         LEFT JOIN users u             ON ts.user_id   = u.user_id
-         WHERE ts.session_id = ?`,
-        [sessionId]
-      );
-      return rows[0] || null;
-    } catch (err) {
-      console.warn('[TestSession.findById] MySQL unavailable, using fallback store:', err.code || err.message);
-      return fallback.getSessionById(sessionId);
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const query = [{ session_id: Number(sessionId) }];
+        if (mongoose.isValidObjectId(sessionId)) query.push({ _id: sessionId });
+
+        const session = await TestSessionModel.findOne({ $or: query }).lean();
+        if (session) {
+          return {
+            ...session,
+            sessionId: session.session_id
+          };
+        }
+      } catch (err) {
+        console.warn('[TestSession.findById] MongoDB error, using fallback store:', err.message);
+      }
     }
+    return fallback.getSessionById(sessionId);
   }
 
   static async updateStatus(sessionId, status) {
-    try {
-      await db.execute('UPDATE test_sessions SET status = ? WHERE session_id = ?', [status, sessionId]);
-    } catch (err) {
-      console.warn('[TestSession.updateStatus] MySQL unavailable, using fallback store:', err.code || err.message);
-      fallback.updateSessionStatus(sessionId, status);
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const query = [{ session_id: Number(sessionId) }];
+        if (mongoose.isValidObjectId(sessionId)) query.push({ _id: sessionId });
+        await TestSessionModel.updateOne({ $or: query }, { $set: { status } });
+        return;
+      } catch (err) {
+        console.warn('[TestSession.updateStatus] MongoDB error, using fallback store:', err.message);
+      }
     }
+    fallback.updateSessionStatus(sessionId, status);
   }
 
   static async count(profileId) {
-    try {
-      let query = 'SELECT COUNT(*) AS total FROM test_sessions';
-      const params = [];
-      if (profileId) {
-        query += ' WHERE profile_id = ?';
-        params.push(profileId);
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const filter = {};
+        if (profileId) filter.profile_id = Number(profileId);
+        return await TestSessionModel.countDocuments(filter);
+      } catch (err) {
+        console.warn('[TestSession.count] MongoDB error, using fallback store:', err.message);
       }
-      const [rows] = await db.execute(query, params);
-      return rows[0].total;
-    } catch (err) {
-      console.warn('[TestSession.count] MySQL unavailable, using fallback store:', err.code || err.message);
-      let list = fallback.getSessions();
-      if (profileId) list = list.filter(s => s.profile_id === Number(profileId));
-      return list.length;
     }
+
+    let list = fallback.getSessions();
+    if (profileId) list = list.filter(s => s.profile_id === Number(profileId));
+    return list.length;
   }
 }
+
+TestSession.Schema = testSessionSchema;
+TestSession.Model = TestSessionModel;
 
 module.exports = TestSession;

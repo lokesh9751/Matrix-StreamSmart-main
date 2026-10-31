@@ -4,7 +4,7 @@ import YouTubeQualitySelector from './YouTubeQualitySelector';
 import { Lock } from 'lucide-react';
 
 const BaselinePlayer = forwardRef(function BaselinePlayer(
-  { src, networkConfig, onMetrics, sessionId },
+  { src, fallbackMp4Url, networkConfig, onMetrics, sessionId },
   ref
 ) {
   const videoRef = useRef(null);
@@ -65,6 +65,7 @@ const BaselinePlayer = forwardRef(function BaselinePlayer(
       playerRef.current = createBaselinePlayer({
         videoEl: videoRef.current,
         src,
+        fallbackMp4Url: fallbackMp4Url || (typeof src === 'object' ? src?.mp4Url : undefined),
         networkConfig: { ...networkConfig, sessionId },
         onMetrics: (m) => {
           setMetrics(m);

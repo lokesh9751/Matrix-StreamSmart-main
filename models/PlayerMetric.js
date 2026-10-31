@@ -1,18 +1,98 @@
-const db = require('../config/db');
+/**
+ * models/PlayerMetric.js – Mongoose Player Metric Model
+ *
+ * Stores comparative benchmark results per session for both BASELINE and OPTIMIZED players:
+ * startup delay, rebuffering frequency, total stall time, average bitrate, and cache hit metrics.
+ */
+
+const mongoose = require('mongoose');
 const fallback = require('../utils/inMemoryFallbackStore');
 
-class PlayerMetric {
-  static async findBySession(sessionId) {
-    try {
-      const [rows] = await db.execute(
-        'SELECT * FROM player_metrics WHERE session_id = ? ORDER BY player_type',
-        [sessionId]
-      );
-      return rows;
-    } catch (err) {
-      console.warn('[PlayerMetric.findBySession] MySQL unavailable, using fallback store:', err.code || err.message);
-      return fallback.getMetricsBySession(sessionId);
+const playerMetricSchema = new mongoose.Schema(
+  {
+    metric_id: {
+      type: Number,
+      index: true
+    },
+    session_id: {
+      type: Number,
+      required: true,
+      index: true
+    },
+    player_type: {
+      type: String,
+      enum: ['BASELINE', 'OPTIMIZED'],
+      required: true
+    },
+    startup_delay_ms: {
+      type: Number,
+      default: 0
+    },
+    stall_count: {
+      type: Number,
+      default: 0
+    },
+    total_stall_duration_sec: {
+      type: Number,
+      default: 0.0
+    },
+    avg_bitrate_kbps: {
+      type: Number,
+      default: 0
+    },
+    quality_switches: {
+      type: Number,
+      default: 0
+    },
+    cache_hits: {
+      type: Number,
+      default: 0
+    },
+    cache_misses: {
+      type: Number,
+      default: 0
+    },
+    created_at: {
+      type: Date,
+      default: Date.now
     }
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+  }
+);
+
+playerMetricSchema.index({ session_id: 1, player_type: 1 }, { unique: true });
+
+playerMetricSchema.pre('save', function (next) {
+  if (!this.metric_id) {
+    this.metric_id = Math.floor(Date.now() % 10000000);
+  }
+  next();
+});
+
+const PlayerMetricModel = mongoose.models.PlayerMetric || mongoose.model('PlayerMetric', playerMetricSchema);
+
+class PlayerMetric {
+  static get model() {
+    return PlayerMetricModel;
+  }
+
+  static async findBySession(sessionId) {
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const rows = await PlayerMetricModel.find({ session_id: Number(sessionId) })
+          .sort({ player_type: 1 })
+          .lean();
+
+        if (rows && rows.length > 0) return rows;
+      } catch (err) {
+        console.warn('[PlayerMetric.findBySession] MongoDB error, using fallback store:', err.message);
+      }
+    }
+    return fallback.getMetricsBySession(sessionId);
   }
 
   static async upsert(sessionId, playerType, metrics) {
@@ -26,36 +106,41 @@ class PlayerMetric {
       cacheMisses = 0
     } = metrics;
 
-    try {
-      const [existing] = await db.execute(
-        'SELECT metric_id FROM player_metrics WHERE session_id = ? AND player_type = ?',
-        [sessionId, playerType]
-      );
+    const updateDoc = {
+      startup_delay_ms: startupDelayMs,
+      stall_count: stallCount,
+      total_stall_duration_sec: totalStallDurationSec,
+      avg_bitrate_kbps: avgBitrateKbps,
+      quality_switches: qualitySwitches,
+      cache_hits: cacheHits,
+      cache_misses: cacheMisses
+    };
 
-      if (existing.length > 0) {
-        await db.execute(
-          `UPDATE player_metrics SET
-            startup_delay_ms = ?, stall_count = ?, total_stall_duration_sec = ?,
-            avg_bitrate_kbps = ?, quality_switches = ?, cache_hits = ?, cache_misses = ?
-           WHERE session_id = ? AND player_type = ?`,
-          [startupDelayMs, stallCount, totalStallDurationSec, avgBitrateKbps,
-           qualitySwitches, cacheHits, cacheMisses, sessionId, playerType]
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const sid = Number(sessionId);
+        await PlayerMetricModel.findOneAndUpdate(
+          { session_id: sid, player_type: playerType },
+          {
+            $set: updateDoc,
+            $setOnInsert: {
+              metric_id: Math.floor(Date.now() % 10000000),
+              created_at: new Date()
+            }
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
         );
-      } else {
-        await db.execute(
-          `INSERT INTO player_metrics
-           (session_id, player_type, startup_delay_ms, stall_count, total_stall_duration_sec,
-            avg_bitrate_kbps, quality_switches, cache_hits, cache_misses)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [sessionId, playerType, startupDelayMs, stallCount, totalStallDurationSec,
-           avgBitrateKbps, qualitySwitches, cacheHits, cacheMisses]
-        );
+        return;
+      } catch (err) {
+        console.warn('[PlayerMetric.upsert] MongoDB error, using fallback store:', err.message);
       }
-    } catch (err) {
-      console.warn('[PlayerMetric.upsert] MySQL unavailable, using fallback store:', err.code || err.message);
-      fallback.upsertMetric(sessionId, playerType, metrics);
     }
+
+    fallback.upsertMetric(sessionId, playerType, metrics);
   }
 }
+
+PlayerMetric.Schema = playerMetricSchema;
+PlayerMetric.Model = PlayerMetricModel;
 
 module.exports = PlayerMetric;

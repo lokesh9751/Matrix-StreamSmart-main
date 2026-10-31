@@ -83,6 +83,21 @@ const api = {
   updateVideo:       (id, b) => request('PUT',    `/admin/videos/${id}`, b),
   deleteVideo:       (id)    => request('DELETE', `/admin/videos/${id}`),
 
+  // Video Management & Cloudinary Chunked Upload
+  uploadVideo: (formData) => {
+    const url = `${BASE}/video/upload`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'x-user-id': '1' },
+      body: formData
+    }).then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Video upload failed');
+      return data;
+    });
+  },
+  streamVideoUrl: (id) => `${BASE}/video/stream/${id}`,
+
   // Health
   health: () => request('GET', '/health'),
 };

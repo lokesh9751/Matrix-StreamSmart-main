@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 const OptimizedPlayer = forwardRef(function OptimizedPlayer(
-  { src, networkConfig, onMetrics, sessionId },
+  { src, fallbackMp4Url, networkConfig, onMetrics, sessionId },
   ref
 ) {
   const videoRef = useRef(null);
@@ -139,6 +139,7 @@ const OptimizedPlayer = forwardRef(function OptimizedPlayer(
       playerRef.current = createOptimizedPlayer({
         videoEl: videoRef.current,
         src,
+        fallbackMp4Url: fallbackMp4Url || (typeof src === 'object' ? src?.mp4Url : undefined),
         networkConfig: { ...networkConfig, sessionId },
         onMetrics: (m) => {
           setMetrics(m);

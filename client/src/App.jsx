@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import Overview from './pages/Overview';
 import Workbench from './pages/Workbench';
+import VideoUpload from './pages/VideoUpload';
 import Analytics from './pages/Analytics';
 import History from './pages/History';
 import ComparisonReport from './pages/ComparisonReport';
@@ -16,6 +17,7 @@ export default function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Overview />} />
           <Route path="workbench" element={<Workbench />} />
+          <Route path="upload" element={<VideoUpload />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="history" element={<History />} />
           <Route path="report" element={<Navigate to="/report/demo" replace />} />
@@ -27,4 +29,3 @@ export default function App() {
     </BrowserRouter>
   );
 }
-

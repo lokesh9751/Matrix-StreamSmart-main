@@ -1,12 +1,12 @@
 /**
- * client/src/utils/dualPlayer.js – Dual HLS.js Player Controller
+ * client/src/utils/dualPlayer.js – Dual HLS.js Player Controller with MP4 Fallback
  *
- * Manages two independent HLS.js instances (Baseline + Optimized).
- *  - Player 1 (Baseline): Fixed-quality streaming. Locked to the highest available
- *    rendition (or user-chosen fixed quality). Built-in and custom ABR are disabled.
- *  - Player 2 (Optimized): Custom Adaptive Bitrate (ABR) Streaming.
- *    Monitors real buffer occupancy and available bandwidth every 1500 ms.
- *    Applies emergency downshifts, bandwidth-limit downshifts, and conservative upshifts.
+ * Manages two independent video player instances (Baseline + Optimized).
+ *  - Player 1 (Baseline): Fixed-quality streaming locked to the highest available rendition.
+ *  - Player 2 (Optimized): Custom Adaptive Bitrate (ABR) Streaming with buffer-driven heuristics.
+ *
+ * Both players support Cloudinary HLS (.m3u8) playback with automatic fallback to direct MP4
+ * URLs if HLS eager transcoding is still in progress or HLS is unavailable.
  */
 
 import Hls from 'hls.js';
@@ -129,10 +129,43 @@ function createThrottledLoaderClass(getNetworkConfig, trackerRef) {
 
 // ── Baseline Player (Fixed High Quality) ───────────────────────────────────
 
-export function createBaselinePlayer({ videoEl, src, networkConfig, onMetrics, onLevels, onError }) {
+export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConfig, onMetrics, onLevels, onError }) {
+  const resolvedHlsUrl = (typeof src === 'string' ? src : (src?.hlsPlaylistUrl || src?.stream_url || src?.mp4Url)) || '';
+  const resolvedMp4Url = fallbackMp4Url || (typeof src === 'object' ? src?.mp4Url : '') || (resolvedHlsUrl.includes('.m3u8') ? resolvedHlsUrl.replace(/\.m3u8$/, '.mp4') : resolvedHlsUrl);
+
+  // If source is direct MP4, attach directly to HTML5 video element
+  if (!resolvedHlsUrl.includes('.m3u8') && (resolvedHlsUrl.endsWith('.mp4') || resolvedMp4Url)) {
+    videoEl.src = resolvedHlsUrl || resolvedMp4Url;
+    videoEl.play().catch(e => console.warn('[Baseline] Autoplay caught:', e.message));
+    return {
+      destroy: () => { videoEl.src = ''; },
+      getHls: () => null,
+      getVideo: () => videoEl,
+      getCurrentTime: () => videoEl.currentTime,
+      play: () => videoEl.play().catch(err => console.warn('[Baseline] Play failed:', err.message)),
+      pause: () => videoEl.pause(),
+      seek: (t) => { if (videoEl && !isNaN(t)) videoEl.currentTime = Math.max(0, t); },
+      updateNetworkConfig: () => {},
+      setQuality: () => {},
+      getTracker: () => null
+    };
+  }
+
   if (!Hls.isSupported()) {
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = src;
+      videoEl.src = resolvedHlsUrl;
+      videoEl.addEventListener('error', () => {
+        if (resolvedMp4Url && videoEl.src !== resolvedMp4Url) {
+          console.warn('[Baseline] Native HLS error – falling back to mp4Url:', resolvedMp4Url);
+          videoEl.src = resolvedMp4Url;
+          videoEl.play().catch(e => console.warn('Native fallback play error:', e.message));
+        }
+      }, { once: true });
+      return { destroy: () => { videoEl.src = ''; }, getHls: () => null };
+    }
+    if (resolvedMp4Url) {
+      console.warn('[Baseline] HLS not supported – falling back to mp4Url:', resolvedMp4Url);
+      videoEl.src = resolvedMp4Url;
       return { destroy: () => { videoEl.src = ''; }, getHls: () => null };
     }
     throw new Error('HLS is not supported in this browser');
@@ -180,6 +213,15 @@ export function createBaselinePlayer({ videoEl, src, networkConfig, onMetrics, o
     if (data.fatal) {
       switch (data.type) {
         case Hls.ErrorTypes.NETWORK_ERROR:
+          if (data.details === 'manifestLoadError' || data.details === 'manifestLoadTimeOut' || data.response?.code === 404) {
+            if (resolvedMp4Url && resolvedMp4Url !== resolvedHlsUrl) {
+              console.warn('[Baseline] HLS manifest still processing or unavailable – falling back to mp4Url:', resolvedMp4Url);
+              hls.destroy();
+              videoEl.src = resolvedMp4Url;
+              videoEl.play().catch(e => console.warn('[Baseline] Fallback play error:', e.message));
+              return;
+            }
+          }
           console.warn('[Baseline] Fatal network error – attempting recovery');
           hls.startLoad();
           break;
@@ -189,13 +231,20 @@ export function createBaselinePlayer({ videoEl, src, networkConfig, onMetrics, o
           break;
         default:
           console.error('[Baseline] Unrecoverable error:', data);
+          if (resolvedMp4Url && videoEl.src !== resolvedMp4Url) {
+            console.warn('[Baseline] Falling back to MP4 URL on unrecoverable error:', resolvedMp4Url);
+            hls.destroy();
+            videoEl.src = resolvedMp4Url;
+            videoEl.play().catch(e => console.warn('[Baseline] Fallback play error:', e.message));
+            return;
+          }
           onError && onError(data);
           break;
       }
     }
   });
 
-  hls.loadSource(src);
+  hls.loadSource(resolvedHlsUrl);
   hls.attachMedia(videoEl);
   tracker.attach(videoEl, hls);
 
@@ -239,6 +288,7 @@ export function createBaselinePlayer({ videoEl, src, networkConfig, onMetrics, o
 export function createOptimizedPlayer({
   videoEl,
   src,
+  fallbackMp4Url,
   networkConfig,
   onMetrics,
   onLevels,
@@ -246,9 +296,42 @@ export function createOptimizedPlayer({
   onQualitySwitch,
   onError
 }) {
+  const resolvedHlsUrl = (typeof src === 'string' ? src : (src?.hlsPlaylistUrl || src?.stream_url || src?.mp4Url)) || '';
+  const resolvedMp4Url = fallbackMp4Url || (typeof src === 'object' ? src?.mp4Url : '') || (resolvedHlsUrl.includes('.m3u8') ? resolvedHlsUrl.replace(/\.m3u8$/, '.mp4') : resolvedHlsUrl);
+
+  // If source is direct MP4, attach directly to HTML5 video element
+  if (!resolvedHlsUrl.includes('.m3u8') && (resolvedHlsUrl.endsWith('.mp4') || resolvedMp4Url)) {
+    videoEl.src = resolvedHlsUrl || resolvedMp4Url;
+    videoEl.play().catch(e => console.warn('[Optimized] Autoplay caught:', e.message));
+    return {
+      destroy: () => { videoEl.src = ''; },
+      getHls: () => null,
+      getVideo: () => videoEl,
+      getCurrentTime: () => videoEl.currentTime,
+      play: () => videoEl.play().catch(err => console.warn('[Optimized] Play failed:', err.message)),
+      pause: () => videoEl.pause(),
+      seek: (t) => { if (videoEl && !isNaN(t)) videoEl.currentTime = Math.max(0, t); },
+      updateNetworkConfig: () => {},
+      setQuality: () => {},
+      getTracker: () => null
+    };
+  }
+
   if (!Hls.isSupported()) {
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = src;
+      videoEl.src = resolvedHlsUrl;
+      videoEl.addEventListener('error', () => {
+        if (resolvedMp4Url && videoEl.src !== resolvedMp4Url) {
+          console.warn('[Optimized] Native HLS error – falling back to mp4Url:', resolvedMp4Url);
+          videoEl.src = resolvedMp4Url;
+          videoEl.play().catch(e => console.warn('Native fallback play error:', e.message));
+        }
+      }, { once: true });
+      return { destroy: () => { videoEl.src = ''; }, getHls: () => null };
+    }
+    if (resolvedMp4Url) {
+      console.warn('[Optimized] HLS not supported – falling back to mp4Url:', resolvedMp4Url);
+      videoEl.src = resolvedMp4Url;
       return { destroy: () => { videoEl.src = ''; }, getHls: () => null };
     }
     throw new Error('HLS is not supported in this browser');
@@ -379,7 +462,7 @@ export function createOptimizedPlayer({
         onQualitySwitch(switchData);
       }
 
-      // Record to MySQL backend
+      // Record to backend
       logQualitySwitchEvent({
         sessionId: currentNetConfig?.sessionId,
         playerType: 'OPTIMIZED',
@@ -415,6 +498,16 @@ export function createOptimizedPlayer({
     if (data.fatal) {
       switch (data.type) {
         case Hls.ErrorTypes.NETWORK_ERROR:
+          if (data.details === 'manifestLoadError' || data.details === 'manifestLoadTimeOut' || data.response?.code === 404) {
+            if (resolvedMp4Url && resolvedMp4Url !== resolvedHlsUrl) {
+              console.warn('[Optimized] HLS manifest still processing or unavailable – falling back to mp4Url:', resolvedMp4Url);
+              if (abrInterval) clearInterval(abrInterval);
+              hls.destroy();
+              videoEl.src = resolvedMp4Url;
+              videoEl.play().catch(e => console.warn('[Optimized] Fallback play error:', e.message));
+              return;
+            }
+          }
           console.warn('[Optimized] Fatal network error – attempting recovery');
           hls.startLoad();
           break;
@@ -424,13 +517,21 @@ export function createOptimizedPlayer({
           break;
         default:
           console.error('[Optimized] Unrecoverable error:', data);
+          if (resolvedMp4Url && videoEl.src !== resolvedMp4Url) {
+            console.warn('[Optimized] Falling back to MP4 URL on unrecoverable error:', resolvedMp4Url);
+            if (abrInterval) clearInterval(abrInterval);
+            hls.destroy();
+            videoEl.src = resolvedMp4Url;
+            videoEl.play().catch(e => console.warn('[Optimized] Fallback play error:', e.message));
+            return;
+          }
           onError && onError(data);
           break;
       }
     }
   });
 
-  hls.loadSource(src);
+  hls.loadSource(resolvedHlsUrl);
   hls.attachMedia(videoEl);
   tracker.attach(videoEl, hls);
 

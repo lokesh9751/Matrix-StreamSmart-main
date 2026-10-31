@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   SlidersHorizontal,
-  Gauge,
+  CloudUpload,
   BarChart3,
   History,
   FileText,
@@ -15,6 +15,7 @@ import {
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, section: 'Core' },
   { to: '/workbench', label: 'Streaming Workbench', icon: SlidersHorizontal, section: 'Core' },
+  { to: '/upload', label: 'Upload Video', icon: CloudUpload, section: 'Core' },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, section: 'Insights' },
   { to: '/history', label: 'Test History', icon: History, section: 'Insights' },
   { to: '/report/demo', label: 'Reports', icon: FileText, section: 'Insights' },

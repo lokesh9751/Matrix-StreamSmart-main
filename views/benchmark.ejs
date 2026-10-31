@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= typeof pageTitle !== 'undefined' ? pageTitle : 'StreamSmart – Benchmark Video Showcase' %></title>
+  <link rel="icon" type="image/svg+xml" href="/streamsmart-icon.svg">
+  <!-- HLS.js CDN for client-side adaptive bitrate streaming -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #7060B5;
+      --primary-dark: #5B4CA2;
+      --primary-subtle: #ECE9F6;
+      --bg-page: #F8F9FB;
+      --bg-card: #FFFFFF;
+      --text-main: #1F2937;
+      --text-muted: #6B7280;
+      --border-color: #E5E7EB;
+      --success: #16A34A;
+      --success-bg: #DCFCE7;
+      --radius: 14px;
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+      --shadow-card: 0 10px 25px -5px rgba(0, 0, 0, 0.04), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+      --shadow-hover: 0 20px 30px -10px rgba(112, 96, 181, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      padding-bottom: 60px;
+    }
+
+    /* ── Navigation Bar ─────────────────────────────────────────── */
+    .navbar {
+      background: #FFFFFF;
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      backdrop-filter: blur(8px);
+      background: rgba(255, 255, 255, 0.95);
+    }
+
+    .nav-container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-main);
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-tag {
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--primary-subtle);
+      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 16px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .btn-secondary {
+      background: #FFFFFF;
+      border-color: var(--border-color);
+      color: var(--text-main);
+    }
+
+    .btn-secondary:hover {
+      background: #F3F4F6;
+      border-color: #D1D5DB;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #FFFFFF;
+      box-shadow: 0 4px 12px rgba(112, 96, 181, 0.3);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+      transform: translateY(-1px);
+    }
+
+    /* ── Main Container ─────────────────────────────────────────── */
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 36px 24px 0 24px;
+    }
+
+    /* ── Page Header ────────────────────────────────────────────── */
+    .page-header {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 32px;
+    }
+
+    .header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      background: var(--primary-subtle);
+      padding: 4px 10px;
+      border-radius: 20px;
+      width: fit-content;
+    }
+
+    .page-title {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      color: var(--text-main);
+    }
+
+    .page-subtitle {
+      font-size: 15px;
+      color: var(--text-muted);
+      max-width: 720px;
+    }
+
+    /* ── Video Grid ─────────────────────────────────────────────── */
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 24px;
+    }
+
+    .video-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .video-card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-hover);
+      border-color: #D1D5DB;
+    }
+
+    /* ── Thumbnail Container ────────────────────────────────────── */
+    .thumbnail-wrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #E5E7EB;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .thumbnail-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.3s ease;
+      display: block;
+    }
+
+    .video-card:hover .thumbnail-img {
+      transform: scale(1.04);
+    }
+
+    .play-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .video-card:hover .play-overlay {
+      opacity: 1;
+    }
+
+    .play-circle {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+      transform: scale(0.9);
+      transition: transform 0.2s ease;
+    }
+
+    .video-card:hover .play-circle {
+      transform: scale(1);
+    }
+
+    .play-circle svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor;
+      margin-left: 3px;
+    }
+
+    .badge-hls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(4px);
+      color: #FFFFFF;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.04em;
+    }
+
+    .duration-badge {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      color: #FFFFFF;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+
+    /* ── Card Content ───────────────────────────────────────────── */
+    .card-body {
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      flex-grow: 1;
+    }
+
+    .video-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 6px;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .video-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: auto;
+      padding-top: 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .meta-date {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .meta-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--success);
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    /* ── Empty State ────────────────────────────────────────────── */
+    .empty-state {
+      background: #FFFFFF;
+      border: 1px dashed #D1D5DB;
+      border-radius: 20px;
+      padding: 64px 24px;
+      text-align: center;
+      max-width: 600px;
+      margin: 40px auto;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .empty-icon-wrap {
+      width: 68px;
+      height: 68px;
+      border-radius: 20px;
+      background: var(--primary-subtle);
+      color: var(--primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .empty-icon-wrap svg {
+      width: 32px;
+      height: 32px;
+      stroke-width: 2;
+    }
+
+    .empty-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+
+    .empty-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+
+    /* ── Video Player Modal ─────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      background: #000000;
+      border-radius: 18px;
+      overflow: hidden;
+      width: 100%;
+      max-width: 900px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      flex-direction: column;
+      transform: scale(0.96);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modal-overlay.active .modal-card {
+      transform: scale(1);
+    }
+
+    .modal-header {
+      background: #111827;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .modal-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .modal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #F9FAFB;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 500px;
+    }
+
+    .stream-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    .pill-hls {
+      background: rgba(112, 96, 181, 0.25);
+      color: #B4A9E8;
+      border: 1px solid rgba(112, 96, 181, 0.4);
+    }
+
+    .pill-mp4 {
+      background: rgba(234, 179, 8, 0.2);
+      color: #FDE047;
+      border: 1px solid rgba(234, 179, 8, 0.4);
+    }
+
+    .modal-close {
+      background: transparent;
+      border: none;
+      color: #9CA3AF;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      transition: all 0.2s;
+    }
+
+    .modal-close:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #FFFFFF;
+    }
+
+    .video-container {
+      position: relative;
+      width: 100%;
+      background: #000000;
+      aspect-ratio: 16 / 9;
+    }
+
+    video#benchmarkPlayer {
+      width: 100%;
+      height: 100%;
+      display: block;
+      outline: none;
+    }
+
+    .modal-footer {
+      background: #111827;
+      padding: 12px 20px;
+      font-size: 12px;
+      color: #9CA3AF;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      gap: 10px;
+    }
+
+    .stream-url-display {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #60A5FA;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Top Navigation Bar ──────────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="/" class="brand">
+        <div class="brand-icon">S</div>
+        <div class="brand-title">StreamSmart</div>
+        <span class="brand-tag">Benchmark Catalog</span>
+      </a>
+      <div class="nav-links">
+        <a href="/" class="btn btn-secondary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          Workbench
+        </a>
+        <a href="/upload" class="btn btn-primary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          Upload Video
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Main Showcase Content ───────────────────────────────────── -->
+  <main class="container">
+    <div class="page-header">
+      <div class="header-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        Cloudinary HLS Video Pipeline
+      </div>
+      <h1 class="page-title">Benchmark Video Gallery</h1>
+      <p class="page-subtitle">
+        Uploaded MP4 videos stored in MongoDB and served through Cloudinary with automated 6MB chunking, adaptive HLS (.m3u8) transcoding, and direct MP4 playback fallback.
+      </p>
+    </div>
+
+    <!-- ── Video Grid OR Empty State ─────────────────────────────── -->
+    <% if (videos && videos.length > 0) { %>
+      <div class="video-grid">
+        <% videos.forEach(function(video) { %>
+          <% 
+            const poster = video.thumbnailUrl || (video.mp4Url ? video.mp4Url.replace(/\.mp4$/, '.jpg') : '');
+            const hlsUrl = video.hlsPlaylistUrl || video.stream_url || video.mp4Url;
+            const mp4Url = video.mp4Url || video.stream_url;
+            const displayTitle = video.title || 'Untitled Stream';
+            const uploadDate = video.formattedDate || (video.createdAt ? new Date(video.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recently Added');
+            const durationSec = video.duration || video.duration_sec;
+            const durationFormatted = durationSec ? `${Math.floor(durationSec / 60)}:${(durationSec % 60).toString().padStart(2, '0')}` : 'HD';
+          %>
+          <div class="video-card">
+            <!-- Clickable Thumbnail Container -->
+            <div
+              class="thumbnail-wrapper"
+              onclick="openVideoModal('<%= displayTitle.replace(/'/g, "\\'") %>', '<%= hlsUrl %>', '<%= mp4Url %>')"
+              title="Click to play <%= displayTitle %>"
+            >
+              <img
+                src="<%= poster %>"
+                alt="<%= displayTitle %>"
+                class="thumbnail-img"
+                loading="lazy"
+                onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'480\' height=\'270\' viewBox=\'0 0 480 270\'><rect fill=\'%23ECE9F6\' width=\'480\' height=\'270\'/><path fill=\'%237060B5\' d=\'M200 95 L200 175 L280 135 Z\'/><text x=\'50%25\' y=\'80%25\' text-anchor=\'middle\' fill=\'%236B7280\' font-family=\'sans-serif\' font-size=\'14\'>StreamSmart Video Preview</text></svg>';"
+              />
+              <div class="play-overlay">
+                <div class="play-circle">
+                  <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                </div>
+              </div>
+              <span class="badge-hls">HLS / MP4</span>
+              <span class="duration-badge"><%= durationFormatted %></span>
+            </div>
+
+            <!-- Card Content Body -->
+            <div class="card-body">
+              <h3 class="video-title" title="<%= displayTitle %>"><%= displayTitle %></h3>
+              
+              <div class="video-meta">
+                <div class="meta-date">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  <span><%= uploadDate %></span>
+                </div>
+                <div class="meta-status">
+                  <span class="status-dot"></span>
+                  <span>Ready</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% }); %>
+      </div>
+    <% } else { %>
+      <!-- Sleek Modern Empty State -->
+      <div class="empty-state">
+        <div class="empty-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+            <line x1="7" y1="2" x2="7" y2="22"></line>
+            <line x1="17" y1="2" x2="17" y2="22"></line>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <line x1="2" y1="7" x2="7" y2="7"></line>
+            <line x1="2" y1="17" x2="7" y2="17"></line>
+            <line x1="17" y1="17" x2="22" y2="17"></line>
+            <line x1="17" y1="7" x2="22" y2="7"></line>
+          </svg>
+        </div>
+        <h2 class="empty-title">No videos uploaded yet</h2>
+        <p class="empty-desc">
+          Be the first to upload! Upload an MP4 video to chunk it into Cloudinary, transcode adaptive HLS manifests, and benchmark playback metrics.
+        </p>
+        <a href="/upload" class="btn btn-primary" style="padding: 11px 24px; font-size: 14px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          Upload Video Now
+        </a>
+      </div>
+    <% } %>
+  </main>
+
+  <!-- ── Integrated HLS / MP4 Video Player Modal ─────────────────── -->
+  <div id="videoModal" class="modal-overlay" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div id="modalTitle" class="modal-title">Video Playback</div>
+          <span id="streamTypePill" class="stream-pill pill-hls">Initializing HLS…</span>
+        </div>
+        <button class="modal-close" onclick="closeVideoModal()" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="video-container">
+        <video id="benchmarkPlayer" controls autoplay playsinline preload="auto"></video>
+      </div>
+
+      <div class="modal-footer">
+        <span>Active Stream:</span>
+        <span id="activeStreamUrl" class="stream-url-display"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Video Playback Logic (HLS with MP4 Fallback) ────────────── -->
+  <script>
+    let hlsInstance = null;
+
+    function openVideoModal(title, hlsUrl, mp4Url) {
+      const modal = document.getElementById('videoModal');
+      const player = document.getElementById('benchmarkPlayer');
+      const titleEl = document.getElementById('modalTitle');
+      const pillEl = document.getElementById('streamTypePill');
+      const streamUrlEl = document.getElementById('activeStreamUrl');
+
+      titleEl.textContent = title;
+      modal.classList.add('active');
+
+      // Reset any existing playback
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+
+      let hasFallenBack = false;
+
+      function fallbackToMp4() {
+        if (hasFallenBack) return;
+        hasFallenBack = true;
+        console.warn('[StreamSmart Player] HLS unavailable. Falling back to direct MP4 URL:', mp4Url);
+
+        pillEl.textContent = 'MP4 Fallback';
+        pillEl.className = 'stream-pill pill-mp4';
+        streamUrlEl.textContent = mp4Url;
+
+        player.src = mp4Url;
+        player.play().catch(function(err) {
+          console.warn('[Player Autoplay Notice]:', err.message);
+        });
+      }
+
+      // 1. Try HLS.js adaptive streaming (.m3u8)
+      if (hlsUrl && Hls.isSupported()) {
+        pillEl.textContent = 'Loading HLS…';
+        pillEl.className = 'stream-pill pill-hls';
+        streamUrlEl.textContent = hlsUrl;
+
+        hlsInstance = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90
+        });
+
+        hlsInstance.loadSource(hlsUrl);
+        hlsInstance.attachMedia(player);
+
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
+          console.log('[StreamSmart Player] HLS manifest parsed successfully.');
+          pillEl.textContent = 'HLS Adaptive (.m3u8)';
+          pillEl.className = 'stream-pill pill-hls';
+          player.play().catch(function(err) {
+            console.warn('[Player Autoplay Notice]:', err.message);
+          });
+        });
+
+        hlsInstance.on(Hls.Events.ERROR, function (event, data) {
+          if (data.fatal) {
+            console.warn('[StreamSmart Player] Fatal HLS error encountered:', data.type);
+            hlsInstance.destroy();
+            hlsInstance = null;
+            fallbackToMp4();
+          }
+        });
+      }
+      // 2. Native Apple Safari HLS playback
+      else if (hlsUrl && player.canPlayType('application/vnd.apple.mpegurl')) {
+        pillEl.textContent = 'Native Apple HLS';
+        pillEl.className = 'stream-pill pill-hls';
+        streamUrlEl.textContent = hlsUrl;
+
+        player.src = hlsUrl;
+        player.addEventListener('error', function onAppleError() {
+          player.removeEventListener('error', onAppleError);
+          fallbackToMp4();
+        }, { once: true });
+
+        player.play().catch(function(err) {
+          console.warn('[Player Autoplay Notice]:', err.message);
+        });
+      }
+      // 3. Fallback to direct MP4 URL
+      else {
+        fallbackToMp4();
+      }
+    }
+
+    function closeVideoModal() {
+      const modal = document.getElementById('videoModal');
+      const player = document.getElementById('benchmarkPlayer');
+
+      modal.classList.remove('active');
+      player.pause();
+
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      player.removeAttribute('src');
+      player.load();
+    }
+
+    function closeModalOnBackdrop(event) {
+      if (event.target === document.getElementById('videoModal')) {
+        closeVideoModal();
+      }
+    }
+
+    // Keyboard support: Escape key closes modal
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        closeVideoModal();
+      }
+    });
+  </script>
+</body>
+</html>

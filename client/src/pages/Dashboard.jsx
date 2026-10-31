@@ -950,6 +950,7 @@ export default function Dashboard() {
             <BaselinePlayer
               ref={baselineRef}
               src={activeStreamSrc}
+              fallbackMp4Url={selectedVideo?.mp4Url}
               networkConfig={networkConfig}
               onMetrics={handleBaselineMetrics}
               sessionId={sessionId}
@@ -957,6 +958,7 @@ export default function Dashboard() {
             <OptimizedPlayer
               ref={optimizedRef}
               src={activeStreamSrc}
+              fallbackMp4Url={selectedVideo?.mp4Url}
               networkConfig={networkConfig}
               onMetrics={handleOptimizedMetrics}
               sessionId={sessionId}
