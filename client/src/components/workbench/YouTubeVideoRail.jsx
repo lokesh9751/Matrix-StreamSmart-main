@@ -1,11 +1,12 @@
 import React, { useRef, useState } from 'react';
-import { Film, Search, ChevronLeft, ChevronRight, Play, CheckCircle2 } from 'lucide-react';
+import { Film, Search, ChevronLeft, ChevronRight, Play, CheckCircle2, Sparkles } from 'lucide-react';
 
 /**
  * YouTubeVideoRail – SaaS Video Stream Carousel
  *
  * Displays benchmark video streams with 16:9 thumbnails, duration badges,
  * resolution tags, category filtering, and smooth horizontal scrolling navigation.
+ * Clearly differentiates user-uploaded Cloudinary videos from standard catalog benchmarks.
  */
 export default function YouTubeVideoRail({
   videos = [],
@@ -17,15 +18,25 @@ export default function YouTubeVideoRail({
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Extract unique categories
-  const categories = ['All', ...new Set(videos.map(v => v.category || 'General').filter(Boolean))];
+  // Extract unique categories (prioritizing 'Uploaded Streams' right after 'All')
+  const rawCategories = [...new Set(videos.map(v => v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General')).filter(Boolean))];
+  const sortedCategories = ['All'];
+  if (rawCategories.includes('Uploaded Streams')) {
+    sortedCategories.push('Uploaded Streams');
+  }
+  rawCategories.forEach(cat => {
+    if (!sortedCategories.includes(cat)) {
+      sortedCategories.push(cat);
+    }
+  });
 
   // Filter videos based on category and search query
   const filteredVideos = videos.filter(v => {
-    const matchesCategory = activeCategory === 'All' || (v.category || 'General') === activeCategory;
+    const videoCat = v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General');
+    const matchesCategory = activeCategory === 'All' || videoCat === activeCategory;
     const matchesSearch = !searchQuery || (
       v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (v.category && v.category.toLowerCase().includes(searchQuery.toLowerCase()))
+      (videoCat && videoCat.toLowerCase().includes(searchQuery.toLowerCase()))
     );
     return matchesCategory && matchesSearch;
   });
@@ -48,7 +59,7 @@ export default function YouTubeVideoRail({
             <span className="yt-count-badge">{videos.length} Streams</span>
           </div>
           <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
-            Choose a multi-bitrate HLS stream to compare baseline vs. ABR performance
+            Choose an uploaded Cloudinary stream or benchmark catalog video to compare baseline vs. ABR
           </span>
         </div>
 
@@ -86,14 +97,14 @@ export default function YouTubeVideoRail({
 
       {/* ── Category Filter Chips ───────────────────────────────────── */}
       <div className="yt-category-chips">
-        {categories.map((cat) => (
+        {sortedCategories.map((cat) => (
           <button
             key={cat}
             type="button"
             className={`yt-chip ${activeCategory === cat ? 'active' : ''}`}
             onClick={() => setActiveCategory(cat)}
           >
-            {cat}
+            {cat === 'Uploaded Streams' ? '✨ Uploaded Streams' : cat}
           </button>
         ))}
       </div>
@@ -101,25 +112,35 @@ export default function YouTubeVideoRail({
       {/* ── Horizontal Scroll Track ─────────────────────────────────── */}
       <div className="yt-rail-track" ref={trackRef}>
         {filteredVideos.map((video) => {
-          const isSelected = selectedVideo?.video_id === video.video_id;
+          const isSelected = String(selectedVideo?.video_id || selectedVideo?.id || '') === String(video.video_id || video.id || '');
+          const thumbSrc = video.thumbnail_url || video.thumbnailUrl || (video.mp4Url ? video.mp4Url.replace(/\.mp4$/, '.jpg') : '') || 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=480&auto=format&fit=crop&q=80';
+          const durationFormatted = video.duration_formatted || (video.duration_sec ? `${Math.floor(video.duration_sec / 60)}:${String(video.duration_sec % 60).padStart(2, '0')}` : 'HD');
 
           return (
             <div
-              key={video.video_id}
+              key={video.video_id || video.id || video.title}
               className={`yt-video-card ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}`}
               onClick={() => !disabled && onSelectVideo && onSelectVideo(video)}
               title={disabled ? 'Benchmark running — stream change disabled' : `Select ${video.title}`}
             >
               <div className="yt-card-thumb-wrap">
                 <img
-                  src={video.thumbnail_url || 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=480&auto=format&fit=crop&q=80'}
+                  src={thumbSrc}
                   alt={video.title}
                   className="yt-card-thumb"
                   loading="lazy"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=480&auto=format&fit=crop&q=80';
+                  }}
                 />
 
-                {video.category && (
-                  <span className="yt-card-badge-top-left">{video.category}</span>
+                {video.is_uploaded ? (
+                  <span className="yt-card-badge-top-left" style={{ background: 'linear-gradient(135deg, #10B981, #059669)', color: '#FFFFFF', fontWeight: 700 }}>
+                    Uploaded
+                  </span>
+                ) : (
+                  video.category && <span className="yt-card-badge-top-left">{video.category}</span>
                 )}
 
                 {video.badge && (
@@ -127,7 +148,7 @@ export default function YouTubeVideoRail({
                 )}
 
                 <span className="yt-card-duration">
-                  {video.duration_formatted || '10:00'}
+                  {durationFormatted}
                 </span>
 
                 <div className="yt-card-hover-overlay">
@@ -158,10 +179,10 @@ export default function YouTubeVideoRail({
               <div className="yt-card-info">
                 <div className="yt-card-title">{video.title}</div>
                 <div className="yt-card-tiers">
-                  {video.available_tiers || '240p,360p,480p,720p,1080p'}
+                  {video.available_tiers || video.availableTiers || '240p,360p,480p,720p,1080p'}
                 </div>
                 <div className="yt-card-meta">
-                  <span>HLS Stream #{video.video_id}</span>
+                  <span>{video.is_uploaded ? 'Cloudinary HLS Stream' : `HLS Stream #${video.video_id || video.id}`}</span>
                 </div>
               </div>
             </div>

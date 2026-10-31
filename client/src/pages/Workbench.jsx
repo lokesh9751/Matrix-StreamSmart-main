@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import BaselinePlayer from '../components/players/BaselinePlayer';
 import OptimizedPlayer from '../components/players/OptimizedPlayer';
 import YouTubeVideoRail from '../components/workbench/YouTubeVideoRail';
@@ -19,7 +19,8 @@ import {
   AlertTriangle,
   Clock,
   Sparkles,
-  BarChart3
+  BarChart3,
+  CloudLightning
 } from 'lucide-react';
 import { VERIFIED_HLS_STREAMS, NETWORK_PROFILES } from '../utils/streamConstants';
 import { saveStoredSession, logAppEvent, logTimelineEvent } from '../services/sessionStore';
@@ -31,12 +32,15 @@ const MAX_BENCHMARK_DURATION_SEC = 600;
 
 export default function Workbench() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   // Selected state
   const [videos, setVideos] = useState(VERIFIED_HLS_STREAMS);
   const [selectedVideo, setSelectedVideo] = useState(VERIFIED_HLS_STREAMS[0]);
   const [selectedProfile, setSelectedProfile] = useState(NETWORK_PROFILES[0]);
   const [benchmarkDuration, setBenchmarkDuration] = useState(DEFAULT_BENCHMARK_DURATION_SEC);
+  const [uploadedTestBanner, setUploadedTestBanner] = useState(null);
 
   // Network simulation sliders
   const [bandwidthKbps, setBandwidthKbps] = useState(4500);
@@ -79,6 +83,91 @@ export default function Workbench() {
   const [cacheHits, setCacheHits] = useState(0);
   const [cacheMisses, setCacheMisses] = useState(0);
 
+  
+  // ── Sync with Backend Catalog & Detect Uploaded Video Navigation ───────────
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadWorkbenchVideos() {
+      try {
+        const res = await api.getVideos();
+        if (!isMounted) return;
+
+        const backendVideos = Array.isArray(res?.videos) ? res.videos : [];
+
+        // Check if an uploaded video was provided via navigation state or localStorage
+        let pendingUploadedVideo = location.state?.selectedVideo;
+        if (!pendingUploadedVideo) {
+          try {
+            const rawStored = localStorage.getItem('streamsmart_active_uploaded_video');
+            if (rawStored) pendingUploadedVideo = JSON.parse(rawStored);
+          } catch (_) {}
+        }
+
+        // Merge backend videos, verified streams, and pending upload without duplicate keys
+        const merged = [];
+        const seenKeys = new Set();
+
+        const addIfUnique = (v) => {
+          if (!v) return;
+          const key = String(v.video_id || v.id || v.title || '');
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            merged.push({
+              ...v,
+              video_id: v.video_id || v.id,
+              stream_url: v.stream_url || v.hlsPlaylistUrl || v.streamUrl || v.mp4Url,
+              thumbnail_url: v.thumbnail_url || v.thumbnailUrl || (v.mp4Url ? v.mp4Url.replace(/\.mp4$/, '.jpg') : ''),
+              duration_sec: v.duration_sec || v.duration || 60,
+              category: v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General'),
+              badge: v.badge || (v.is_uploaded ? 'Cloudinary HLS' : 'HD')
+            });
+          }
+        };
+
+        if (pendingUploadedVideo) addIfUnique(pendingUploadedVideo);
+        backendVideos.forEach(addIfUnique);
+        VERIFIED_HLS_STREAMS.forEach(addIfUnique);
+
+        setVideos(merged);
+
+        // Determine which stream to load
+        const queryVideoId = searchParams.get('videoId');
+        const stateVideo = location.state?.selectedVideo;
+        const savedVideoId = localStorage.getItem('streamsmart_selected_video_id');
+
+        let target = null;
+        if (stateVideo) {
+          target = merged.find(v => String(v.video_id || v.id) === String(stateVideo.video_id || stateVideo.id)) || stateVideo;
+        } else if (queryVideoId) {
+          target = merged.find(v => String(v.video_id || v.id) === String(queryVideoId));
+        } else if (savedVideoId) {
+          target = merged.find(v => String(v.video_id || v.id) === String(savedVideoId));
+        }
+
+        if (!target && merged.length > 0) {
+          target = merged.find(v => v.is_uploaded || v.category === 'Uploaded Streams') || merged[0];
+        }
+
+        if (target) {
+          setSelectedVideo(target);
+          const videoLen = Number(target.duration_sec) || 0;
+          if (videoLen > 0) {
+            setBenchmarkDuration(Math.min(Math.max(videoLen, MIN_BENCHMARK_DURATION_SEC), MAX_BENCHMARK_DURATION_SEC));
+          }
+          if (target.is_uploaded || target.category === 'Uploaded Streams') {
+            setUploadedTestBanner(`Testing Cloudinary HLS Stream: "${target.title}"`);
+          }
+        }
+      } catch (err) {
+        console.warn('[Workbench] Video catalog fetch notice:', err.message);
+      }
+    }
+
+    loadWorkbenchVideos();
+    return () => { isMounted = false; };
+  }, [location.state, searchParams]);
+
   const countdownTimerRef = useRef(null);
   const seriesTimerRef = useRef(null);
   const elapsedSecRef = useRef(0);
@@ -103,6 +192,16 @@ export default function Workbench() {
   const handleVideoSelect = (video) => {
     if (isBenchmarking) return;
     setSelectedVideo(video);
+    try {
+      localStorage.setItem('streamsmart_selected_video_id', String(video.video_id || video.id || ''));
+    } catch (_) {}
+
+    if (video.is_uploaded || video.category === 'Uploaded Streams') {
+      setUploadedTestBanner(`Testing Cloudinary HLS Stream: "${video.title}"`);
+    } else {
+      setUploadedTestBanner(null);
+    }
+
     // Clamp benchmark duration to the selected video's actual length
     const videoLen = Number(video.duration_sec) || 0;
     const clamped = Math.min(
@@ -442,10 +541,45 @@ export default function Workbench() {
       </div>
 
       {/* ── Dual Player Grid: Player 1 (Baseline) vs Player 2 (Optimized) ── */}
+      {uploadedTestBanner && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: 'linear-gradient(135deg, rgba(112, 96, 181, 0.12), rgba(16, 185, 129, 0.12))',
+          border: '1px solid rgba(112, 96, 181, 0.3)',
+          borderRadius: '12px',
+          padding: '12px 18px',
+          marginBottom: '20px',
+          fontSize: '13.5px',
+          color: 'var(--text-primary)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Sparkles size={18} color="var(--primary-purple)" />
+            <span><strong>Active Uploaded Video:</strong> {selectedVideo?.title}</span>
+            <span style={{
+              background: 'var(--primary-purple)',
+              color: '#FFFFFF',
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '6px'
+            }}>
+              Cloudinary HLS
+            </span>
+          </div>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+            {(selectedVideo?.stream_url || selectedVideo?.hlsPlaylistUrl || '')?.slice(0, 50)}…
+          </span>
+        </div>
+      )}
+
+      {/* ── Dual Player Grid: Player 1 (Baseline) vs Player 2 (Optimized) ── */}
       <div className="dual-player-grid" style={{ marginBottom: '24px' }}>
         <BaselinePlayer
           ref={baselinePlayerRef}
-          src={selectedVideo.stream_url}
+          src={selectedVideo?.stream_url || selectedVideo?.hlsPlaylistUrl || selectedVideo?.mp4Url}
+          fallbackMp4Url={selectedVideo?.mp4Url || selectedVideo?.secure_url}
           networkConfig={{
             enabled: true,
             bandwidthKbps,
@@ -460,7 +594,8 @@ export default function Workbench() {
 
         <OptimizedPlayer
           ref={optimizedPlayerRef}
-          src={selectedVideo.stream_url}
+          src={selectedVideo?.stream_url || selectedVideo?.hlsPlaylistUrl || selectedVideo?.mp4Url}
+          fallbackMp4Url={selectedVideo?.mp4Url || selectedVideo?.secure_url}
           networkConfig={{
             enabled: true,
             bandwidthKbps,

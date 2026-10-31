@@ -107,11 +107,14 @@ router.post('/upload', upload.single('video'), async (req, res) => {
     const title = req.body.title || req.file.originalname.replace(/\.[^/.]+$/, '');
     const description = req.body.description || '';
     const availableTiers = req.body.availableTiers || '240p,360p,480p,720p,1080p';
-    const duration = uploadResult.duration || 0;
+    const duration = uploadResult.duration ? Math.round(uploadResult.duration) : 60;
     const fileSize = uploadResult.bytes || req.file.size || 0;
+    const uniqueVideoId = Math.floor(Date.now() % 10000000);
 
-    // Save video document in MongoDB via Mongoose
-    const video = await Video.create({
+    // Save video document via unified persistent model (MongoDB + persistent disk fallback)
+    const videoRecord = await Video.createVideo({
+      videoId: uniqueVideoId,
+      video_id: uniqueVideoId,
       title,
       description,
       cloudinaryPublicId: uploadResult.public_id,
@@ -120,18 +123,44 @@ router.post('/upload', upload.single('video'), async (req, res) => {
       thumbnailUrl,
       fileSize,
       duration,
+      durationSec: duration,
+      duration_sec: duration,
       status: 'ready',
       stream_url: hlsPlaylistUrl,
       available_tiers: availableTiers,
-      duration_sec: duration ? Math.round(duration) : 60,
+      availableTiers,
       is_active: true,
-      video_id: Math.floor(Date.now() % 1000000)
+      category: 'Uploaded Streams',
+      badge: 'Cloudinary HLS',
+      is_uploaded: true
     });
+
+    const finalVideo = {
+      video_id: videoRecord.video_id || videoRecord.videoId || uniqueVideoId,
+      id: videoRecord.video_id || videoRecord.videoId || uniqueVideoId,
+      title: videoRecord.title || title,
+      description: videoRecord.description || description,
+      cloudinaryPublicId: uploadResult.public_id,
+      mp4Url,
+      hlsPlaylistUrl,
+      stream_url: hlsPlaylistUrl,
+      streamUrl: hlsPlaylistUrl,
+      thumbnailUrl,
+      thumbnail_url: thumbnailUrl,
+      available_tiers: availableTiers,
+      availableTiers,
+      duration_sec: duration,
+      duration,
+      fileSize,
+      category: 'Uploaded Streams',
+      badge: 'Cloudinary HLS',
+      is_uploaded: true
+    };
 
     return res.status(201).json({
       success: true,
       message: 'Video successfully uploaded and queued for adaptive HLS transcoding',
-      video
+      video: finalVideo
     });
   } catch (error) {
     // Delete temporary file on error

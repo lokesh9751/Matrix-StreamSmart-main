@@ -80,7 +80,17 @@ export default function VideoUpload() {
       const res = await api.uploadVideo(formData);
       clearInterval(progressTimer);
       setProgress(100);
-      setUploadedVideo(res.video);
+      const videoData = res.video || res;
+      setUploadedVideo(videoData);
+
+      // Cache uploaded video state so Workbench immediately recognizes and selects it
+      try {
+        const vidId = videoData.video_id || videoData.id || videoData.videoId || '';
+        localStorage.setItem('streamsmart_selected_video_id', String(vidId));
+        localStorage.setItem('streamsmart_active_uploaded_video', JSON.stringify(videoData));
+      } catch (cacheErr) {
+        console.warn('Could not cache uploaded video to localStorage:', cacheErr);
+      }
     } catch (err) {
       setError(err.message || 'Video upload failed. Check Cloudinary credentials in .env.');
     } finally {
@@ -171,15 +181,33 @@ export default function VideoUpload() {
               <strong>{uploadedVideo.title}</strong>
             </div>
             <div style={{ wordBreak: 'break-all', marginBottom: '8px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>HLS Manifest: </span>
-              <span style={{ color: 'var(--primary-purple)' }}>{uploadedVideo.hlsPlaylistUrl}</span>
+              <span style={{ color: 'var(--text-muted)' }}>HLS Manifest (.m3u8): </span>
+              <span style={{ color: 'var(--primary-purple)', fontWeight: 600 }}>
+                {uploadedVideo.hlsPlaylistUrl || uploadedVideo.stream_url}
+              </span>
             </div>
-            {uploadedVideo.thumbnailUrl && (
-              <div style={{ marginTop: '10px', textAlign: 'center' }}>
+            {uploadedVideo.mp4Url && (
+              <div style={{ wordBreak: 'break-all', marginBottom: '8px' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Direct MP4: </span>
+                <span style={{ color: 'var(--text-secondary)' }}>{uploadedVideo.mp4Url}</span>
+              </div>
+            )}
+            <div style={{ marginBottom: '8px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Resolutions: </span>
+              <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                {uploadedVideo.available_tiers || uploadedVideo.availableTiers || '240p,360p,480p,720p,1080p'}
+              </span>
+            </div>
+            {(uploadedVideo.thumbnailUrl || uploadedVideo.thumbnail_url) && (
+              <div style={{ marginTop: '12px', textAlign: 'center' }}>
                 <img
-                  src={uploadedVideo.thumbnailUrl}
+                  src={uploadedVideo.thumbnailUrl || uploadedVideo.thumbnail_url}
                   alt="Thumbnail"
-                  style={{ width: '180px', height: '100px', objectFit: 'cover', borderRadius: '8px' }}
+                  style={{ width: '220px', height: '124px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=480&auto=format&fit=crop&q=80';
+                  }}
                 />
               </div>
             )}
@@ -200,10 +228,21 @@ export default function VideoUpload() {
             <button
               type="button"
               className="btn btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-              onClick={() => navigate('/workbench')}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', fontWeight: 600 }}
+              onClick={() => {
+                const vidId = uploadedVideo.video_id || uploadedVideo.id || uploadedVideo.videoId || '';
+                try {
+                  localStorage.setItem('streamsmart_selected_video_id', String(vidId));
+                  localStorage.setItem('streamsmart_active_uploaded_video', JSON.stringify(uploadedVideo));
+                } catch (e) {
+                  console.warn('Could not save to localStorage:', e);
+                }
+                navigate(`/workbench?videoId=${encodeURIComponent(vidId)}`, {
+                  state: { selectedVideo: uploadedVideo }
+                });
+              }}
             >
-              <Play size={15} />
+              <Play size={16} fill="currentColor" />
               <span>Test in Workbench</span>
             </button>
           </div>

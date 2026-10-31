@@ -397,8 +397,34 @@
           throw new Error(data.error || 'Upload failed');
         }
 
-        showAlert('Video uploaded successfully! HLS Manifest: ' + (data.video?.hlsPlaylistUrl || 'ready'), 'success');
+        const uploaded = data.video || {};
+        const vidId = uploaded.video_id || uploaded.id || '';
+        try {
+          localStorage.setItem('streamsmart_selected_video_id', String(vidId));
+          localStorage.setItem('streamsmart_active_uploaded_video', JSON.stringify(uploaded));
+        } catch (_) {}
+
+        showAlert('Video uploaded successfully! Transcoded to HLS: ' + (uploaded.hlsPlaylistUrl || 'ready'), 'success');
         submitBtn.innerHTML = 'Uploaded!';
+
+        // Append Workbench Navigation Action
+        let actionBtn = document.getElementById('testWorkbenchBtn');
+        if (!actionBtn) {
+          actionBtn = document.createElement('a');
+          actionBtn.id = 'testWorkbenchBtn';
+          actionBtn.className = 'btn-submit';
+          actionBtn.style.marginTop = '12px';
+          actionBtn.style.display = 'flex';
+          actionBtn.style.alignItems = 'center';
+          actionBtn.style.justifyContent = 'center';
+          actionBtn.style.gap = '8px';
+          actionBtn.style.textDecoration = 'none';
+          actionBtn.style.background = '#10B981';
+          actionBtn.style.color = '#FFFFFF';
+          actionBtn.href = '/workbench?videoId=' + encodeURIComponent(vidId);
+          actionBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>Test in Workbench</span>';
+          uploadForm.appendChild(actionBtn);
+        }
       } catch (err) {
         clearInterval(interval);
         showAlert(err.message, 'error');

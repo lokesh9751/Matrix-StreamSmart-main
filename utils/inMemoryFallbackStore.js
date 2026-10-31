@@ -1,20 +1,145 @@
 /**
  * utils/inMemoryFallbackStore.js
  *
- * Provides a robust, zero-dependency in-memory mock data store that activates
- * automatically whenever MySQL is offline or disconnected.
- * Ensures the StreamSmart backend remains 100% operational for testing, API exploration,
- * and frontend client connectivity even when MySQL service is unavailable.
+ * Provides a robust, zero-dependency data store that persists uploaded video metadata
+ * to disk (data/uploaded_videos.json) and memory.
+ * Ensures StreamSmart remains 100% operational with persistent video records across server restarts
+ * whether MongoDB is connected, offline, or in fallback mode.
  */
 
+const fs = require('fs');
+const path = require('path');
+
+const DATA_DIR = path.resolve(__dirname, '../data');
+const PERSISTENT_VIDEOS_FILE = path.join(DATA_DIR, 'uploaded_videos.json');
+
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (err) {
+    console.warn('[FallbackStore] Could not create data directory:', err.message);
+  }
+}
+
 const FALLBACK_VIDEOS = [
-  { video_id: 1, title: 'Big Buck Bunny (Mux 1080p 60fps)', stream_url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8', available_tiers: '240p,360p,480p,720p,1080p', duration_sec: 596, is_active: 1 },
-  { video_id: 2, title: 'Tears of Steel — Sci-Fi VFX', stream_url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8', available_tiers: '360p,480p,720p,1080p', duration_sec: 734, is_active: 1 },
-  { video_id: 3, title: 'Akamai Live Sports & Extreme Action', stream_url: 'https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8', available_tiers: '360p,540p,720p,1080p', duration_sec: 330, is_active: 1 },
-  { video_id: 4, title: 'Mux Multi-Rendition Adaptive Test 001', stream_url: 'https://test-streams.mux.dev/test_001/stream.m3u8', available_tiers: '240p,360p,480p,720p,1080p', duration_sec: 150, is_active: 1 },
-  { video_id: 5, title: 'Mux High-Motion PTS Shift Stream', stream_url: 'https://test-streams.mux.dev/pts_shift/master.m3u8', available_tiers: '360p,540p,720p,1080p', duration_sec: 225, is_active: 1 },
-  { video_id: 6, title: 'Apple BipBop 16x9 Cinematic Test', stream_url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8', available_tiers: '240p,360p,540p,720p,1080p', duration_sec: 600, is_active: 1 }
+  {
+    video_id: 1,
+    title: 'Big Buck Bunny (Mux 1080p 60fps)',
+    stream_url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+    hlsPlaylistUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+    mp4Url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    thumbnail_url: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=480&auto=format&fit=crop&q=80',
+    available_tiers: '240p,360p,480p,720p,1080p',
+    duration_sec: 596,
+    category: 'Short Film',
+    badge: '1080p 60fps',
+    is_active: 1,
+    is_uploaded: false
+  },
+  {
+    video_id: 2,
+    title: 'Tears of Steel — Sci-Fi VFX',
+    stream_url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
+    hlsPlaylistUrl: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
+    mp4Url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    thumbnail_url: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=480&auto=format&fit=crop&q=80',
+    available_tiers: '360p,480p,720p,1080p',
+    duration_sec: 734,
+    category: 'Sci-Fi',
+    badge: 'Cinema 4K',
+    is_active: 1,
+    is_uploaded: false
+  },
+  {
+    video_id: 3,
+    title: 'Akamai Live Sports & Extreme Action',
+    stream_url: 'https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8',
+    hlsPlaylistUrl: 'https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8',
+    mp4Url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    thumbnail_url: 'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=480&auto=format&fit=crop&q=80',
+    available_tiers: '360p,540p,720p,1080p',
+    duration_sec: 330,
+    category: 'Sports',
+    badge: 'Live HLS',
+    is_active: 1,
+    is_uploaded: false
+  },
+  {
+    video_id: 4,
+    title: 'Mux Multi-Rendition Adaptive Test 001',
+    stream_url: 'https://test-streams.mux.dev/test_001/stream.m3u8',
+    hlsPlaylistUrl: 'https://test-streams.mux.dev/test_001/stream.m3u8',
+    mp4Url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+    thumbnail_url: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=480&auto=format&fit=crop&q=80',
+    available_tiers: '240p,360p,480p,720p,1080p',
+    duration_sec: 150,
+    category: 'Demo',
+    badge: 'ABR Ladder',
+    is_active: 1,
+    is_uploaded: false
+  },
+  {
+    video_id: 5,
+    title: 'Mux High-Motion PTS Shift Stream',
+    stream_url: 'https://test-streams.mux.dev/pts_shift/master.m3u8',
+    hlsPlaylistUrl: 'https://test-streams.mux.dev/pts_shift/master.m3u8',
+    mp4Url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4',
+    thumbnail_url: 'https://images.unsplash.com/photo-1518173946687-a4c8a383392e?w=480&auto=format&fit=crop&q=80',
+    available_tiers: '360p,540p,720p,1080p',
+    duration_sec: 225,
+    category: 'Motion Test',
+    badge: 'Stress Test',
+    is_active: 1,
+    is_uploaded: false
+  },
+  {
+    video_id: 6,
+    title: 'Apple BipBop 16x9 Cinematic Test',
+    stream_url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8',
+    hlsPlaylistUrl: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8',
+    mp4Url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackSeeTheWorld.mp4',
+    thumbnail_url: 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=480&auto=format&fit=crop&q=80',
+    available_tiers: '240p,360p,540p,720p,1080p',
+    duration_sec: 600,
+    category: 'Apple Reference',
+    badge: 'Standard HLS',
+    is_active: 1,
+    is_uploaded: false
+  }
 ];
+
+// Load persisted videos from disk on initialization
+function loadPersistedVideos() {
+  if (fs.existsSync(PERSISTENT_VIDEOS_FILE)) {
+    try {
+      const raw = fs.readFileSync(PERSISTENT_VIDEOS_FILE, 'utf8');
+      const savedVideos = JSON.parse(raw);
+      if (Array.isArray(savedVideos)) {
+        savedVideos.forEach(sv => {
+          if (!FALLBACK_VIDEOS.some(v => String(v.video_id) === String(sv.video_id))) {
+            FALLBACK_VIDEOS.unshift(sv);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[FallbackStore] Error loading persistent videos:', err.message);
+    }
+  }
+}
+
+// Save uploaded videos array to disk
+function savePersistedVideos() {
+  try {
+    const uploadedOnly = FALLBACK_VIDEOS.filter(v => v.is_uploaded);
+    fs.writeFileSync(PERSISTENT_VIDEOS_FILE, JSON.stringify(uploadedOnly, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[FallbackStore] Could not persist videos to disk:', err.message);
+  }
+}
+
+// Initial load from disk
+loadPersistedVideos();
 
 const FALLBACK_PROFILES = [
   { profile_id: 1, profile_name: 'Rural 3G (Congested)', bandwidth_kbps: 850, latency_ms: 220, packet_loss_pct: 2.50, cache_hit_prob: 0.20 },
@@ -29,7 +154,7 @@ const FALLBACK_USERS = [
 ];
 
 let nextSessionId = 100;
-let nextVideoId = 20;
+let nextVideoId = 50;
 let nextProfileId = 10;
 
 const sessions = [
@@ -99,32 +224,66 @@ const playbackEvents = [];
 module.exports = {
   // Videos
   getVideos: () => [...FALLBACK_VIDEOS],
-  getVideoById: (id) => FALLBACK_VIDEOS.find(v => v.video_id === Number(id)) || null,
-  addVideo: ({ title, streamUrl, availableTiers, durationSec }) => {
+  getVideoById: (id) => FALLBACK_VIDEOS.find(v => String(v.video_id) === String(id) || String(v.id) === String(id)) || null,
+  addVideo: ({ videoId, title, streamUrl, mp4Url, thumbnailUrl, availableTiers, durationSec, category, badge, isUploaded }) => {
+    const finalId = videoId || nextVideoId++;
+    const resolvedStreamUrl = streamUrl || mp4Url || '';
+    const resolvedHlsUrl = resolvedStreamUrl.includes('.m3u8') ? resolvedStreamUrl : (mp4Url ? mp4Url.replace(/\.mp4$/, '.m3u8') : resolvedStreamUrl);
+    const resolvedThumbnail = thumbnailUrl || (mp4Url ? mp4Url.replace(/\.mp4$/, '.jpg') : 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=480&auto=format&fit=crop&q=80');
+
     const item = {
-      video_id: nextVideoId++,
-      title,
-      stream_url: streamUrl,
+      video_id: finalId,
+      id: finalId,
+      title: title || 'Untitled Stream',
+      stream_url: resolvedHlsUrl,
+      hlsPlaylistUrl: resolvedHlsUrl,
+      mp4Url: mp4Url || resolvedStreamUrl,
+      thumbnail_url: resolvedThumbnail,
+      thumbnailUrl: resolvedThumbnail,
       available_tiers: availableTiers || '240p,360p,480p,720p,1080p',
-      duration_sec: durationSec || 600,
-      is_active: 1
+      duration_sec: durationSec || 60,
+      duration: durationSec || 60,
+      category: category || 'Uploaded Streams',
+      badge: badge || 'Cloudinary HLS',
+      is_active: 1,
+      is_uploaded: isUploaded !== undefined ? isUploaded : true,
+      created_at: new Date().toISOString()
     };
-    FALLBACK_VIDEOS.push(item);
+
+    // Remove any previous record with the same ID
+    const existingIndex = FALLBACK_VIDEOS.findIndex(v => String(v.video_id) === String(finalId));
+    if (existingIndex >= 0) {
+      FALLBACK_VIDEOS[existingIndex] = item;
+    } else {
+      FALLBACK_VIDEOS.unshift(item); // Put newest uploaded video at the top
+    }
+
+    savePersistedVideos();
     return item;
   },
   updateVideo: (id, data) => {
-    const v = FALLBACK_VIDEOS.find(x => x.video_id === Number(id));
+    const v = FALLBACK_VIDEOS.find(x => String(x.video_id) === String(id));
     if (!v) return null;
     if (data.title !== undefined) v.title = data.title;
-    if (data.streamUrl !== undefined) v.stream_url = data.streamUrl;
+    if (data.streamUrl !== undefined) {
+      v.stream_url = data.streamUrl;
+      v.hlsPlaylistUrl = data.streamUrl;
+    }
     if (data.availableTiers !== undefined) v.available_tiers = data.availableTiers;
-    if (data.durationSec !== undefined) v.duration_sec = data.durationSec;
+    if (data.durationSec !== undefined) {
+      v.duration_sec = data.durationSec;
+      v.duration = data.durationSec;
+    }
     if (data.isActive !== undefined) v.is_active = data.isActive ? 1 : 0;
+    savePersistedVideos();
     return { ...v };
   },
   deleteVideo: (id) => {
-    const v = FALLBACK_VIDEOS.find(x => x.video_id === Number(id));
-    if (v) v.is_active = 0;
+    const v = FALLBACK_VIDEOS.find(x => String(x.video_id) === String(id));
+    if (v) {
+      v.is_active = 0;
+      savePersistedVideos();
+    }
   },
 
   // Profiles
@@ -166,7 +325,7 @@ module.exports = {
   getSessions: () => [...sessions],
   getSessionById: (id) => sessions.find(s => s.session_id === Number(id)) || null,
   createSession: (data) => {
-    const video = FALLBACK_VIDEOS.find(v => v.video_id === Number(data.videoId)) || FALLBACK_VIDEOS[0];
+    const video = FALLBACK_VIDEOS.find(v => String(v.video_id) === String(data.videoId)) || FALLBACK_VIDEOS[0];
     const profile = FALLBACK_PROFILES.find(p => p.profile_id === Number(data.profileId)) || FALLBACK_PROFILES[0];
     const newSession = {
       session_id: nextSessionId++,
@@ -181,7 +340,7 @@ module.exports = {
       sim_cache_hit_prob: data.simCacheHitProb !== undefined ? data.simCacheHitProb : profile.cache_hit_prob,
       measurement_mode: data.measurementMode || 'SIMULATED',
       test_duration_sec: data.testDurationSec || 30,
-      status: 'running',
+      status: 'active',
       created_at: new Date().toISOString()
     };
     sessions.unshift(newSession);
@@ -190,59 +349,74 @@ module.exports = {
   updateSessionStatus: (id, status) => {
     const s = sessions.find(x => x.session_id === Number(id));
     if (s) s.status = status;
+    return s;
   },
 
   // Metrics
   getAllMetrics: () => [...playerMetrics],
+  getPlayerMetrics: (sessionId) => playerMetrics.filter(m => m.session_id === Number(sessionId)),
   getMetricsBySession: (sessionId) => playerMetrics.filter(m => m.session_id === Number(sessionId)),
   upsertMetric: (sessionId, playerType, metrics) => {
-    const existingIdx = playerMetrics.findIndex(
-      m => m.session_id === Number(sessionId) && m.player_type === playerType
-    );
-    const item = {
-      metric_id: existingIdx >= 0 ? playerMetrics[existingIdx].metric_id : playerMetrics.length + 1,
+    return module.exports.savePlayerMetrics({ sessionId, playerType, metrics });
+  },
+  savePlayerMetrics: ({ sessionId, playerType, metrics }) => {
+    const existing = playerMetrics.find(m => m.session_id === Number(sessionId) && m.player_type === playerType);
+    if (existing) {
+      Object.assign(existing, {
+        startup_delay_ms: metrics.startupDelayMs !== undefined ? metrics.startupDelayMs : existing.startup_delay_ms,
+        stall_count: metrics.stallCount !== undefined ? metrics.stallCount : existing.stall_count,
+        total_stall_duration_sec: metrics.totalStallDurationSec !== undefined ? metrics.totalStallDurationSec : existing.total_stall_duration_sec,
+        avg_bitrate_kbps: metrics.currentBitrateKbps !== undefined ? metrics.currentBitrateKbps : existing.avg_bitrate_kbps,
+        quality_switches: metrics.qualitySwitches !== undefined ? metrics.qualitySwitches : existing.quality_switches,
+        cache_hits: metrics.cacheHits !== undefined ? metrics.cacheHits : existing.cache_hits,
+        cache_misses: metrics.cacheMisses !== undefined ? metrics.cacheMisses : existing.cache_misses
+      });
+      return existing;
+    }
+    const newMetric = {
+      metric_id: playerMetrics.length + 1,
       session_id: Number(sessionId),
       player_type: playerType,
       startup_delay_ms: metrics.startupDelayMs || 0,
       stall_count: metrics.stallCount || 0,
-      total_stall_duration_sec: parseFloat(Number(metrics.totalStallDurationSec || 0).toFixed(2)),
-      avg_bitrate_kbps: Math.round(Number(metrics.avgBitrateKbps || 0)),
+      total_stall_duration_sec: metrics.totalStallDurationSec || 0,
+      avg_bitrate_kbps: metrics.currentBitrateKbps || 0,
       quality_switches: metrics.qualitySwitches || 0,
       cache_hits: metrics.cacheHits || 0,
       cache_misses: metrics.cacheMisses || 0
     };
-    if (existingIdx >= 0) {
-      playerMetrics[existingIdx] = item;
-    } else {
-      playerMetrics.push(item);
-    }
-    return item;
+    playerMetrics.push(newMetric);
+    return newMetric;
   },
 
-  // Playback Events
-  getAllPlaybackEvents: () => [...playbackEvents],
-  getEventsBySession: (sessionId, playerType) => {
+  // Events
+  getPlaybackEvents: (sessionId, playerType) => {
     return playbackEvents.filter(e => {
-      if (e.session_id !== Number(sessionId)) return false;
-      if (playerType && e.player_type !== playerType) return false;
-      return true;
+      const matchSession = e.session_id === Number(sessionId);
+      const matchType = playerType ? e.player_type === playerType : true;
+      return matchSession && matchType;
     });
   },
-  addPlaybackEvent: (event) => {
-    const item = {
+  getEventsBySession: (sessionId, playerType) => {
+    return module.exports.getPlaybackEvents(sessionId, playerType);
+  },
+  addPlaybackEvent: (evt) => {
+    return module.exports.logPlaybackEvent(evt);
+  },
+  logPlaybackEvent: (evt) => {
+    const eventRecord = {
       event_id: playbackEvents.length + 1,
-      ...event,
-      session_id: Number(event.sessionId || event.session_id),
-      player_type: event.playerType || event.player_type,
-      event_type: event.eventType || event.event_type,
-      elapsed_sec: parseFloat(Number(event.elapsedSec || event.elapsed_sec || event.playbackTimeSec || 0).toFixed(1)),
-      buffer_level_sec: parseFloat(Number(event.bufferSec || event.buffer_level_sec || 0).toFixed(2)),
-      resolution_label: event.resolution || event.resolutionLabel || event.resolution_label || 'unknown',
-      simulated_delay_ms: parseInt(event.delayMs || event.simulatedDelayMs || event.simulated_delay_ms || 0, 10),
-      is_cache_hit: Boolean(event.isCacheHit || event.is_cache_hit),
-      timestamp: event.timestamp || new Date().toISOString()
+      session_id: Number(evt.sessionId),
+      player_type: evt.playerType,
+      event_type: evt.eventType,
+      elapsed_sec: evt.elapsedSec || 0,
+      bitrate_kbps: evt.bitrateKbps || null,
+      resolution_label: evt.resolutionLabel || null,
+      buffer_sec: evt.bufferSec || null,
+      metadata: evt.metadata ? (typeof evt.metadata === 'string' ? evt.metadata : JSON.stringify(evt.metadata)) : null,
+      created_at: new Date().toISOString()
     };
-    playbackEvents.push(item);
-    return item.event_id;
+    playbackEvents.push(eventRecord);
+    return eventRecord;
   }
 };

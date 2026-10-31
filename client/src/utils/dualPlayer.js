@@ -136,9 +136,18 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
   // If source is direct MP4, attach directly to HTML5 video element
   if (!resolvedHlsUrl.includes('.m3u8') && (resolvedHlsUrl.endsWith('.mp4') || resolvedMp4Url)) {
     videoEl.src = resolvedHlsUrl || resolvedMp4Url;
+    const tracker = createTelemetryTracker({
+      playerType: 'BASELINE',
+      sessionId: networkConfig?.sessionId,
+      onMetricsUpdate: onMetrics,
+    });
+    tracker.attach(videoEl, null);
     videoEl.play().catch(e => console.warn('[Baseline] Autoplay caught:', e.message));
     return {
-      destroy: () => { videoEl.src = ''; },
+      destroy: () => {
+        tracker.detach();
+        try { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); } catch (_) {}
+      },
       getHls: () => null,
       getVideo: () => videoEl,
       getCurrentTime: () => videoEl.currentTime,
@@ -147,7 +156,7 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
       seek: (t) => { if (videoEl && !isNaN(t)) videoEl.currentTime = Math.max(0, t); },
       updateNetworkConfig: () => {},
       setQuality: () => {},
-      getTracker: () => null
+      getTracker: () => tracker
     };
   }
 
@@ -252,6 +261,7 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
     destroy() {
       tracker.detach();
       hls.destroy();
+      try { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); } catch (_) {}
     },
     getHls:     () => hls,
     getTracker: () => tracker,
@@ -277,8 +287,9 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
       selectedQualityIndex = target;
       hls.currentLevel     = target;
       hls.loadLevel        = target;
+      hls.nextLevel        = target;
       hls.autoLevelEnabled = false;
-      console.log(`[Baseline] Fixed quality locked to level ${target}:`, hls.levels[target]);
+      console.log(`[Baseline] Fixed quality locked to level ${target} (${hls.levels[target]?.height || '--'}p):`, hls.levels[target]);
     }
   };
 }
@@ -302,9 +313,18 @@ export function createOptimizedPlayer({
   // If source is direct MP4, attach directly to HTML5 video element
   if (!resolvedHlsUrl.includes('.m3u8') && (resolvedHlsUrl.endsWith('.mp4') || resolvedMp4Url)) {
     videoEl.src = resolvedHlsUrl || resolvedMp4Url;
+    const tracker = createTelemetryTracker({
+      playerType: 'OPTIMIZED',
+      sessionId: networkConfig?.sessionId,
+      onMetricsUpdate: onMetrics,
+    });
+    tracker.attach(videoEl, null);
     videoEl.play().catch(e => console.warn('[Optimized] Autoplay caught:', e.message));
     return {
-      destroy: () => { videoEl.src = ''; },
+      destroy: () => {
+        tracker.detach();
+        try { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); } catch (_) {}
+      },
       getHls: () => null,
       getVideo: () => videoEl,
       getCurrentTime: () => videoEl.currentTime,
@@ -313,7 +333,7 @@ export function createOptimizedPlayer({
       seek: (t) => { if (videoEl && !isNaN(t)) videoEl.currentTime = Math.max(0, t); },
       updateNetworkConfig: () => {},
       setQuality: () => {},
-      getTracker: () => null
+      getTracker: () => tracker
     };
   }
 
@@ -537,9 +557,10 @@ export function createOptimizedPlayer({
 
   return {
     destroy() {
-      if (abrInterval) clearInterval(abrInterval);
+      if (abrInterval) { clearInterval(abrInterval); abrInterval = null; }
       tracker.detach();
       hls.destroy();
+      try { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); } catch (_) {}
     },
     getHls:     () => hls,
     getTracker: () => tracker,
@@ -560,17 +581,20 @@ export function createOptimizedPlayer({
       currentNetConfig = { ...currentNetConfig, ...newConfig };
     },
     setQuality(levelIndex) {
-      if (!hls) return;
+      if (!hls || !hls.levels) return;
       if (levelIndex === -1) {
         isAutoMode = true;
+        hls.autoLevelEnabled = false;
         console.log('[Optimized] Restored Auto mode (Custom ABR active)');
       } else {
         isAutoMode = false;
         const target = Math.max(0, Math.min(levelIndex, hls.levels.length - 1));
-        hls.currentLevel = target;
-        hls.loadLevel = target;
         currentTargetLevel = target;
-        console.log(`[Optimized] Manual quality override to level ${target}:`, hls.levels[target]);
+        hls.currentLevel   = target;
+        hls.loadLevel      = target;
+        hls.nextLevel      = target;
+        hls.autoLevelEnabled = false;
+        console.log(`[Optimized] Manual quality override to level ${target} (${hls.levels[target]?.height || '--'}p):`, hls.levels[target]);
       }
     }
   };
