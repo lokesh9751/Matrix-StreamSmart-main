@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import BaselinePlayer from '../components/players/BaselinePlayer';
 import OptimizedPlayer from '../components/players/OptimizedPlayer';
@@ -240,10 +240,81 @@ export default function Workbench() {
   const baselinePlayerRef = useRef(null);
   const optimizedPlayerRef = useRef(null);
 
+  // Synchronization refs to prevent stale closures in intervals and asynchronous handlers
+  const bandwidthKbpsRef = useRef(bandwidthKbps);
+  bandwidthKbpsRef.current = bandwidthKbps;
+  const latencyMsRef = useRef(latencyMs);
+  latencyMsRef.current = latencyMs;
+  const packetLossPctRef = useRef(packetLossPct);
+  packetLossPctRef.current = packetLossPct;
+  const cacheHitProbRef = useRef(cacheHitProb);
+  cacheHitProbRef.current = cacheHitProb;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const throttledUpdateRef = useRef(null);
+
+  // Centralized network configuration memoized to prevent unnecessary player re-renders
+  const currentNetworkConfig = useMemo(() => ({
+    enabled: true,
+    bandwidthKbps,
+    latencyMs,
+    packetLossPct,
+    cacheHitProb,
+    sessionId
+  }), [bandwidthKbps, latencyMs, packetLossPct, cacheHitProb, sessionId]);
+
+  // Centralized Dynamic Bandwidth Update Mechanism
+  // Slider → Bandwidth Simulator → Network Conditions → ABR Controller → Video Player
+  const handleBandwidthChange = useCallback((newBw) => {
+    const bw = Math.max(200, Math.min(25000, Number(newBw) || 4500));
+    setBandwidthKbps(bw);
+    bandwidthKbpsRef.current = bw;
+
+    const updatedConfig = {
+      enabled: true,
+      bandwidthKbps: bw,
+      latencyMs: latencyMsRef.current,
+      packetLossPct: packetLossPctRef.current,
+      cacheHitProb: cacheHitProbRef.current,
+      sessionId: sessionIdRef.current
+    };
+
+    // Fast-path: propagate immediately to Baseline fixed-quality player simulation
+    baselinePlayerRef.current?.updateNetworkConfig(updatedConfig);
+
+    // Throttle high-frequency ABR recalculation during fast continuous dragging (50ms window)
+    // Ensures real-time responsiveness without intermediate quality-switch oscillations
+    if (throttledUpdateRef.current) {
+      clearTimeout(throttledUpdateRef.current);
+    }
+    throttledUpdateRef.current = setTimeout(() => {
+      optimizedPlayerRef.current?.updateNetworkConfig(updatedConfig);
+      throttledUpdateRef.current = null;
+    }, 50);
+  }, []);
+
+  // Flush any pending throttled update immediately on pointer/mouse/touch release
+  const flushBandwidthChange = useCallback(() => {
+    if (throttledUpdateRef.current) {
+      clearTimeout(throttledUpdateRef.current);
+      throttledUpdateRef.current = null;
+      const updatedConfig = {
+        enabled: true,
+        bandwidthKbps: bandwidthKbpsRef.current,
+        latencyMs: latencyMsRef.current,
+        packetLossPct: packetLossPctRef.current,
+        cacheHitProb: cacheHitProbRef.current,
+        sessionId: sessionIdRef.current
+      };
+      optimizedPlayerRef.current?.updateNetworkConfig(updatedConfig);
+    }
+  }, []);
+
   // Profile presets handler
   const handleProfileChange = (profile) => {
     setSelectedProfile(profile);
-    setBandwidthKbps(profile.bandwidth_kbps);
+    handleBandwidthChange(profile.bandwidth_kbps);
+    flushBandwidthChange();
     setLatencyMs(profile.latency_ms);
     setPacketLossPct(profile.packet_loss_pct);
     setCacheHitProb(profile.cache_hit_prob);
@@ -414,8 +485,9 @@ export default function Workbench() {
     const bMetrics = baselineMetricsRef.current || baselineMetrics;
     const oMetrics = optimizedMetricsRef.current || optimizedMetrics;
 
-    const bStalls = bMetrics.stallCount || (bandwidthKbps < 3000 ? 3 : 0);
-    const bRebuf = bMetrics.totalStallDurationSec || (bandwidthKbps < 3000 ? 8.2 : 0);
+    const activeBw = bandwidthKbpsRef.current || bandwidthKbps;
+    const bStalls = bMetrics.stallCount || (activeBw < 3000 ? 3 : 0);
+    const bRebuf = bMetrics.totalStallDurationSec || (activeBw < 3000 ? 8.2 : 0);
     const oStalls = oMetrics.stallCount || 0;
     const oRebuf = oMetrics.totalStallDurationSec || 0;
     const stallsAvoided = Math.max(0, bStalls - oStalls);
@@ -512,6 +584,7 @@ export default function Workbench() {
     return () => {
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       if (seriesTimerRef.current) clearInterval(seriesTimerRef.current);
+      if (throttledUpdateRef.current) clearTimeout(throttledUpdateRef.current);
     };
   }, []);
 
@@ -699,14 +772,7 @@ export default function Workbench() {
           ref={baselinePlayerRef}
           src={selectedVideo?.stream_url || selectedVideo?.hlsPlaylistUrl || selectedVideo?.mp4Url}
           fallbackMp4Url={selectedVideo?.mp4Url || selectedVideo?.secure_url}
-          networkConfig={{
-            enabled: true,
-            bandwidthKbps,
-            latencyMs,
-            packetLossPct,
-            cacheHitProb,
-            sessionId
-          }}
+          networkConfig={currentNetworkConfig}
           onMetrics={handleBaselineMetrics}
           sessionId={sessionId}
         />
@@ -715,14 +781,7 @@ export default function Workbench() {
           ref={optimizedPlayerRef}
           src={selectedVideo?.stream_url || selectedVideo?.hlsPlaylistUrl || selectedVideo?.mp4Url}
           fallbackMp4Url={selectedVideo?.mp4Url || selectedVideo?.secure_url}
-          networkConfig={{
-            enabled: true,
-            bandwidthKbps,
-            latencyMs,
-            packetLossPct,
-            cacheHitProb,
-            sessionId
-          }}
+          networkConfig={currentNetworkConfig}
           onMetrics={handleOptimizedMetrics}
           sessionId={sessionId}
         />
@@ -798,11 +857,26 @@ export default function Workbench() {
               </div>
             </div>
 
-            {/* Bandwidth Slider */}
+            {/* Bandwidth Slider (Dynamic real-time control during benchmark) */}
             <div className="slider-group">
               <div className="slider-header">
                 <span className="slider-label">Bandwidth Limit</span>
-                <span className="slider-value">{bandwidthKbps.toLocaleString()} Kbps</span>
+                <span className="slider-value" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {isBenchmarking && (
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: '7px',
+                        height: '7px',
+                        borderRadius: '50%',
+                        background: 'var(--success)',
+                        boxShadow: '0 0 6px var(--success)'
+                      }}
+                      title="Real-time throttler active"
+                    />
+                  )}
+                  {bandwidthKbps.toLocaleString()} Kbps
+                </span>
               </div>
               <input
                 type="range"
@@ -811,8 +885,11 @@ export default function Workbench() {
                 max="25000"
                 step="100"
                 value={bandwidthKbps}
-                onChange={(e) => setBandwidthKbps(Number(e.target.value))}
-                disabled={isBenchmarking}
+                onChange={(e) => handleBandwidthChange(Number(e.target.value))}
+                onPointerUp={flushBandwidthChange}
+                onMouseUp={flushBandwidthChange}
+                onTouchEnd={flushBandwidthChange}
+                aria-label="Simulated Bandwidth Limit in Kbps"
               />
               <div className="slider-hint">Safe Headroom (75%): {Math.round(bandwidthKbps * 0.75).toLocaleString()} Kbps</div>
             </div>

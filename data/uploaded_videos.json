@@ -1,5 +1,24 @@
 [
   {
+    "video_id": 574295,
+    "id": 574295,
+    "title": "Sync Test Video",
+    "stream_url": "https://res.cloudinary.com/demo/video/upload/sp_hd/streamsmart_videos/sync_test_1793485574295.m3u8",
+    "hlsPlaylistUrl": "https://res.cloudinary.com/demo/video/upload/sp_hd/streamsmart_videos/sync_test_1793485574295.m3u8",
+    "mp4Url": "https://res.cloudinary.com/demo/video/upload/streamsmart_videos/sync_test_1793485574295.mp4",
+    "thumbnail_url": "https://res.cloudinary.com/demo/video/upload/streamsmart_videos/sync_test_1793485574295.jpg",
+    "thumbnailUrl": "https://res.cloudinary.com/demo/video/upload/streamsmart_videos/sync_test_1793485574295.jpg",
+    "available_tiers": "240p,360p,480p,720p,1080p",
+    "duration_sec": 60,
+    "duration": 60,
+    "category": "Uploaded Streams",
+    "badge": "Cloudinary HLS",
+    "is_active": 0,
+    "is_uploaded": true,
+    "cloudinaryPublicId": "streamsmart_videos/sync_test_1793485574295",
+    "created_at": "2026-10-31T22:26:14.295Z"
+  },
+  {
     "video_id": 325584,
     "id": 325584,
     "title": "Sync Test Video",
@@ -168,5 +187,24 @@
     "is_uploaded": true,
     "cloudinaryPublicId": "streamsmart_videos/sync_test_1793483544881",
     "created_at": "2026-10-31T21:52:24.881Z"
+  },
+  {
+    "video_id": 456036,
+    "id": 456036,
+    "title": "Sync Test Video",
+    "stream_url": "https://res.cloudinary.com/demo/video/upload/sp_hd/streamsmart_videos/sync_test_1793485456036.m3u8",
+    "hlsPlaylistUrl": "https://res.cloudinary.com/demo/video/upload/sp_hd/streamsmart_videos/sync_test_1793485456036.m3u8",
+    "mp4Url": "https://res.cloudinary.com/demo/video/upload/streamsmart_videos/sync_test_1793485456036.mp4",
+    "thumbnail_url": "https://res.cloudinary.com/demo/video/upload/streamsmart_videos/sync_test_1793485456036.jpg",
+    "thumbnailUrl": "https://res.cloudinary.com/demo/video/upload/streamsmart_videos/sync_test_1793485456036.jpg",
+    "available_tiers": "240p,360p,480p,720p,1080p",
+    "duration_sec": 60,
+    "duration": 60,
+    "category": "Uploaded Streams",
+    "badge": "Cloudinary HLS",
+    "is_active": 0,
+    "is_uploaded": true,
+    "cloudinaryPublicId": "streamsmart_videos/sync_test_1793485456036",
+    "created_at": "2026-10-31T22:24:16.036Z"
   }
 ]

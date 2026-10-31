@@ -182,11 +182,15 @@ const OptimizedPlayer = forwardRef(function OptimizedPlayer(
               const lvl = hls.levels[state.currentLevelIndex];
               const res = lvl.height ? `${lvl.height}p` : `L${state.currentLevelIndex}`;
               const br = Math.round((lvl.bitrate || lvl.averageBitrate || 0) / 1000);
-              setMetrics(prev => ({
-                ...prev,
-                currentResolution: res,
-                currentBitrateKbps: br > 0 ? br : prev.currentBitrateKbps,
-              }));
+              setMetrics(prev => {
+                const nextMetrics = {
+                  ...prev,
+                  currentResolution: res,
+                  currentBitrateKbps: br > 0 ? br : prev.currentBitrateKbps,
+                };
+                if (onMetrics) onMetrics(nextMetrics);
+                return nextMetrics;
+              });
             }
           }
         },
@@ -196,11 +200,15 @@ const OptimizedPlayer = forwardRef(function OptimizedPlayer(
           if (typeof switchItem.toLevelIndex === 'number' && switchItem.toLevelIndex >= 0) {
             actualLevelRef.current = switchItem.toLevelIndex;
           }
-          setMetrics(prev => ({
-            ...prev,
-            currentResolution: switchItem.toLevel || prev.currentResolution,
-            qualitySwitches: prev.qualitySwitches + 1
-          }));
+          setMetrics(prev => {
+            const nextMetrics = {
+              ...prev,
+              currentResolution: switchItem.toLevel || prev.currentResolution,
+              qualitySwitches: prev.qualitySwitches + 1
+            };
+            if (onMetrics) onMetrics(nextMetrics);
+            return nextMetrics;
+          });
         },
         onError: (err) => {
           setStatus('error');

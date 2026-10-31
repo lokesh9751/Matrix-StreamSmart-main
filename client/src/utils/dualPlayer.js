@@ -56,8 +56,11 @@ function createThrottledLoaderClass(getNetworkConfig, trackerRef) {
         ...callbacks,
         onSuccess: (response, stats, ctx, networkDetails) => {
           try {
+            // Read active network config dynamically to handle real-time slider adjustments
+            const activeConfig = (getNetworkConfig ? getNetworkConfig() : netConfig) || {};
+
             // 1. Packet loss simulation: drop segment if condition met
-            const packetLossPct = parseFloat(netConfig.packetLossPct || 0);
+            const packetLossPct = parseFloat(activeConfig.packetLossPct || 0);
             if (packetLossPct > 0 && Math.random() * 100 < packetLossPct) {
               if (originalOnError) {
                 originalOnError.call(this, { code: 408, text: 'Simulated Packet Loss (Timeout)' }, ctx, networkDetails);
@@ -68,18 +71,18 @@ function createThrottledLoaderClass(getNetworkConfig, trackerRef) {
             // 2. Segment size in bits
             const segmentBytes = stats?.total || stats?.loaded || response?.data?.byteLength || 350000;
             const segmentBits = segmentBytes * 8;
-            const bwKbps = Math.max(50, parseFloat(netConfig.bandwidthKbps) || 4500);
+            const bwKbps = Math.max(50, parseFloat(activeConfig.bandwidthKbps) || 4500);
             const bwBps = bwKbps * 1000;
 
             // 3. Transfer duration: (bits / bps) * 1000 ms
             const transferTimeMs = Math.round((segmentBits / bwBps) * 1000);
 
             // 4. Base RTT Latency + +/-10% Jitter
-            const latencyMs = Math.max(0, parseInt(netConfig.latencyMs, 10) || 0);
+            const latencyMs = Math.max(0, parseInt(activeConfig.latencyMs, 10) || 0);
             const jitterMs = Math.round((Math.random() * 0.2 - 0.1) * latencyMs);
 
             // 5. Edge Cache simulation: Hit = 12ms edge delay, Miss = 260ms origin delay
-            const cacheHitProb = netConfig.cacheHitProb !== undefined ? parseFloat(netConfig.cacheHitProb) : 0.75;
+            const cacheHitProb = activeConfig.cacheHitProb !== undefined ? parseFloat(activeConfig.cacheHitProb) : 0.75;
             const isCacheHit = Math.random() < cacheHitProb;
             const cacheDelayMs = isCacheHit ? 12 : 260;
 
@@ -90,6 +93,9 @@ function createThrottledLoaderClass(getNetworkConfig, trackerRef) {
             // 6. Total simulated delivery delay
             const totalDelayMs = Math.max(10, Math.min(transferTimeMs + latencyMs + jitterMs + cacheDelayMs, 12000));
 
+            // Derive actual measured download throughput distinct from configured slider limit
+            const measuredThroughputKbps = Math.max(10, Math.round(segmentBits / totalDelayMs));
+
             this.delayTimer = setTimeout(() => {
               this.delayTimer = null;
               // Update loader stats with actual delivery completion time for accurate bandwidth estimation
@@ -97,7 +103,7 @@ function createThrottledLoaderClass(getNetworkConfig, trackerRef) {
                 stats.loading.end = performance.now();
               }
               if (trackerRef?.current?.recordThroughput) {
-                trackerRef.current.recordThroughput(bwKbps);
+                trackerRef.current.recordThroughput(measuredThroughputKbps);
               }
               originalOnSuccess.call(this, response, stats, ctx, networkDetails);
             }, totalDelayMs);
