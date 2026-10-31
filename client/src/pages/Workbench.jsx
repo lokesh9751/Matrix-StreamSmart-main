@@ -36,7 +36,7 @@ export default function Workbench() {
   const [videos] = useState(VERIFIED_HLS_STREAMS);
   const [selectedVideo, setSelectedVideo] = useState(VERIFIED_HLS_STREAMS[0]);
   const [selectedProfile, setSelectedProfile] = useState(NETWORK_PROFILES[0]);
-  const [benchmarkDuration, setBenchmarkDuration] = useState(benchmarkDuration);
+  const [benchmarkDuration, setBenchmarkDuration] = useState(DEFAULT_BENCHMARK_DURATION_SEC);
 
   // Network simulation sliders
   const [bandwidthKbps, setBandwidthKbps] = useState(4500);
@@ -49,6 +49,9 @@ export default function Workbench() {
   const [countdown, setCountdown] = useState(benchmarkDuration);
   const [sessionId, setSessionId] = useState(null);
   const [completedSession, setCompletedSession] = useState(null);
+
+  // Draft input value for benchmark duration (allows temporary empty state during editing)
+  const [draftDuration, setDraftDuration] = useState(null);
 
   // Player telemetry metrics
   const [baselineMetrics, setBaselineMetrics] = useState({
@@ -152,7 +155,7 @@ export default function Workbench() {
       packetLossPct,
       cacheHitProb,
       testDurationSec: benchmarkDuration
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Countdown timer
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -284,6 +287,13 @@ export default function Workbench() {
   };
 
   useEffect(() => {
+    // Reset draft when benchmarkDuration changes externally (e.g., from video selection)
+    if (draftDuration !== null) {
+      setDraftDuration(String(benchmarkDuration));
+    }
+  }, [benchmarkDuration]);
+
+  useEffect(() => {
     return () => {
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       if (seriesTimerRef.current) clearInterval(seriesTimerRef.current);
@@ -306,7 +316,7 @@ export default function Workbench() {
             {!isBenchmarking ? (
               <button className="btn btn-primary" onClick={startBenchmark}>
                 <Play size={14} fill="currentColor" />
-                <span>Start 30s Benchmark</span>
+                <span>Start Benchmark</span>
               </button>
             ) : (
               <button className="btn btn-danger" onClick={stopBenchmark}>
@@ -404,7 +414,7 @@ export default function Workbench() {
             title="Demonstrate Baseline stalls vs ABR continuity on 3G"
           >
             <AlertTriangle size={13} color="var(--error)" />
-            <span>🚨 Congested 3G (850k - Force Stalls)</span>
+            <span>Congested 3G (850k - Force Stalls)</span>
           </button>
 
           <button
@@ -415,7 +425,7 @@ export default function Workbench() {
             title="Demonstrate adaptive downshift to 480p/360p"
           >
             <Activity size={13} color="var(--warning)" />
-            <span>🚆 Mobile Transit (1.8M - Dynamic ABR)</span>
+            <span>Mobile Transit (1.8M - Dynamic ABR)</span>
           </button>
 
           <button
@@ -426,7 +436,7 @@ export default function Workbench() {
             title="Demonstrate peak 1080p upshift on high-speed fiber"
           >
             <TrendingUp size={13} color="var(--success)" />
-            <span>🚀 Fiber CDN (15M - Peak 1080p)</span>
+            <span>Fiber CDN (15M - Peak 1080p)</span>
           </button>
         </div>
       </div>
@@ -506,14 +516,21 @@ export default function Workbench() {
                 min={MIN_BENCHMARK_DURATION_SEC}
                 max={Math.max(MIN_BENCHMARK_DURATION_SEC, Number(selectedVideo.duration_sec) || MAX_BENCHMARK_DURATION_SEC)}
                 step={5}
-                value={benchmarkDuration}
+                value={draftDuration !== null ? draftDuration : String(benchmarkDuration)}
                 onChange={(e) => {
-                  const v = Number(e.target.value);
+                  const val = e.target.value;
+                  // Allow empty string during editing, don't clamp yet
+                  setDraftDuration(val);
+                }}
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  const v = val === '' || val === null ? benchmarkDuration : Number(val);
                   const videoLen = Number(selectedVideo.duration_sec) || 0;
                   const clamped = Math.min(
                     Math.max(v, MIN_BENCHMARK_DURATION_SEC),
                     videoLen > 0 ? videoLen : MAX_BENCHMARK_DURATION_SEC
                   );
+                  setDraftDuration(null);
                   setBenchmarkDuration(clamped);
                 }}
                 disabled={isBenchmarking}

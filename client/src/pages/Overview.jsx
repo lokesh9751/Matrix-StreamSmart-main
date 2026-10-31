@@ -18,9 +18,7 @@ import {
   Cpu,
   ChevronRight,
   ShieldCheck,
-  Radio,
-  FileText,
-  Sparkles
+  Radio
 } from 'lucide-react';
 import { VERIFIED_HLS_STREAMS, NETWORK_PROFILES } from '../utils/streamConstants';
 import {
@@ -204,6 +202,41 @@ export default function Overview() {
     return () => clearInterval(pollTimerRef.current);
   }, []);
 
+  // Keep custom Play/Pause state in sync with actual playback events
+  // (HLS.js auto-play, native pause, ended, and stalled states).
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    const onPlaying = () => {
+      setIsPlaying(true);
+      setPlayerStatus('playing');
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+      setPlayerStatus(prev => (prev === 'error' ? 'error' : 'idle'));
+    };
+    const onEnded = () => {
+      setIsPlaying(false);
+      setPlayerStatus('idle');
+    };
+    const onWaiting = () => {
+      if (!v.paused) setPlayerStatus('stalled');
+    };
+
+    v.addEventListener('playing', onPlaying);
+    v.addEventListener('pause', onPause);
+    v.addEventListener('ended', onEnded);
+    v.addEventListener('waiting', onWaiting);
+
+    return () => {
+      v.removeEventListener('playing', onPlaying);
+      v.removeEventListener('pause', onPause);
+      v.removeEventListener('ended', onEnded);
+      v.removeEventListener('waiting', onWaiting);
+    };
+  }, []);
+
   const handleSelectVideo = (video) => {
     setSelectedVideo(video);
     logAppEvent({
@@ -329,39 +362,6 @@ export default function Overview() {
             </Link>
           </div>
         </div>
-      </div>
-
-      {/* ── Hackathon Demo Highlight Banner ─────────────────────────── */}
-      <div style={{
-        background: 'var(--info-bg)',
-        border: '1px solid var(--border-accent)',
-        borderRadius: 'var(--radius-lg)',
-        padding: '12px 18px',
-        marginBottom: '20px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '12px',
-        boxShadow: 'var(--shadow-xs)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: 'var(--radius-md)', background: 'var(--info-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary-purple)', flexShrink: 0 }}>
-            <Sparkles size={16} />
-          </div>
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
-              Innovista Hackathon Showcase: Dual-Player Streaming Optimization & Benchmarking
-            </div>
-            <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-              Directly measure startup latency, buffer starvation stalls, and ABR dynamic downshifts under identical network conditions.
-            </div>
-          </div>
-        </div>
-        <Link to="/workbench" className="btn btn-primary btn-sm">
-          <span>Launch Dual-Player Comparison</span>
-          <ChevronRight size={14} />
-        </Link>
       </div>
 
       {/* ── Metric Cards Row 1 (4 Cards) ────────────────────────────── */}
@@ -574,7 +574,6 @@ export default function Overview() {
             <div className="player-video-wrap" style={{ borderRadius: 'var(--radius-md)' }}>
               <video
                 ref={videoRef}
-                controls
                 playsInline
                 muted
                 style={{ width: '100%', height: '100%', display: 'block' }}
@@ -623,9 +622,22 @@ export default function Overview() {
                 <span className="chip chip-blue" style={{ fontSize: '10px', padding: '1px 6px' }}>{selectedVideo.badge}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <button className="btn btn-secondary btn-sm" onClick={togglePlay}>
-                  {isPlaying ? <Pause size={13} /> : <Play size={13} />}
-                  <span>{isPlaying ? 'Pause' : 'Play'}</span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={togglePlay}
+                  disabled={playerStatus === 'loading' || playerStatus === 'error'}
+                  title={playerStatus === 'loading' ? 'Buffering…' : undefined}
+                >
+                  {playerStatus === 'loading' ? (
+                    <RotateCcw size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : isPlaying ? (
+                    <Pause size={13} />
+                  ) : (
+                    <Play size={13} />
+                  )}
+                  <span>
+                    {playerStatus === 'loading' ? 'Loading…' : isPlaying ? 'Pause' : 'Play'}
+                  </span>
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={initStream}>
                   <RotateCcw size={13} />
