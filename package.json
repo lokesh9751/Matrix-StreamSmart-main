@@ -1,0 +1,26 @@
+{
+  "name": "streamsmart-backend",
+  "version": "1.0.0",
+  "description": "StreamSmart – Smart Video Streaming Optimization & Benchmarking Platform",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node scripts/devAll.js",
+    "start": "node server.js",
+    "server": "node server.js",
+    "client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "db:init": "node scripts/initDatabase.js",
+    "seed": "node seed.js",
+    "test": "node test-inprocess.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.3",
+    "mysql2": "^3.9.7",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
