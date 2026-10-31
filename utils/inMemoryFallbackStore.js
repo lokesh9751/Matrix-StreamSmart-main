@@ -225,7 +225,7 @@ module.exports = {
   // Videos
   getVideos: () => [...FALLBACK_VIDEOS],
   getVideoById: (id) => FALLBACK_VIDEOS.find(v => String(v.video_id) === String(id) || String(v.id) === String(id)) || null,
-  addVideo: ({ videoId, title, streamUrl, mp4Url, thumbnailUrl, availableTiers, durationSec, category, badge, isUploaded }) => {
+  addVideo: ({ videoId, title, streamUrl, mp4Url, thumbnailUrl, availableTiers, durationSec, category, badge, isUploaded, cloudinaryPublicId }) => {
     const finalId = videoId || nextVideoId++;
     const resolvedStreamUrl = streamUrl || mp4Url || '';
     const resolvedHlsUrl = resolvedStreamUrl.includes('.m3u8') ? resolvedStreamUrl : (mp4Url ? mp4Url.replace(/\.mp4$/, '.m3u8') : resolvedStreamUrl);
@@ -247,17 +247,20 @@ module.exports = {
       badge: badge || 'Cloudinary HLS',
       is_active: 1,
       is_uploaded: isUploaded !== undefined ? isUploaded : true,
+      cloudinaryPublicId: cloudinaryPublicId || '',
       created_at: new Date().toISOString()
     };
 
-    // Remove any previous record with the same ID
-    const existingIndex = FALLBACK_VIDEOS.findIndex(v => String(v.video_id) === String(finalId));
+    // Remove any previous record with the same ID or same cloudinaryPublicId
+    const existingIndex = FALLBACK_VIDEOS.findIndex(v =>
+      String(v.video_id) === String(finalId) ||
+      (cloudinaryPublicId && v.cloudinaryPublicId === cloudinaryPublicId)
+    );
     if (existingIndex >= 0) {
       FALLBACK_VIDEOS[existingIndex] = item;
     } else {
       FALLBACK_VIDEOS.unshift(item); // Put newest uploaded video at the top
     }
-
     savePersistedVideos();
     return item;
   },
@@ -284,6 +287,18 @@ module.exports = {
       v.is_active = 0;
       savePersistedVideos();
     }
+  },
+  deleteVideoByCloudinaryPublicId: (publicId) => {
+    if (!publicId) return false;
+    let changed = false;
+    FALLBACK_VIDEOS.forEach(v => {
+      if (v.cloudinaryPublicId === publicId || (v.stream_url && v.stream_url.includes(publicId))) {
+        v.is_active = 0;
+        changed = true;
+      }
+    });
+    if (changed) savePersistedVideos();
+    return changed;
   },
 
   // Profiles

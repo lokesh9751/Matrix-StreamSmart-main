@@ -25,7 +25,7 @@ export default function PerformanceBarChart({ baselineMetrics, optimizedMetrics 
         </div>
       </div>
       <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-        Side-by-side QoS comparison: Startup Delay (ms) · Rebuffer Duration (s) · Stalls
+        Side-by-side QoS comparison: Startup Delay (s) · Rebuffering (s) · Stalls · Avg Bitrate (Mbps)
       </div>
       <div className="chart-container">
         {hasData ? (

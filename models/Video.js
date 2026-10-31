@@ -155,33 +155,50 @@ videoSchema.statics.findAll = async function () {
   // Also load fallback & disk-persisted videos
   const fallbackVideos = fallback.getVideos().filter(v => v.is_active);
 
-  // Merge unique by video_id or title
+  // Merge unique by video_id, cloudinaryPublicId, stream_url, or normalized title
   const seenIds = new Set();
+  const seenPublicIds = new Set();
+  const seenUrls = new Set();
+  const seenTitles = new Set();
   const merged = [];
 
   const allCandidates = [...dbVideos, ...fallbackVideos];
   for (const v of allCandidates) {
-    const idKey = String(v.video_id || v.id || v._id);
-    if (!seenIds.has(idKey)) {
-      seenIds.add(idKey);
-      const streamUrl = v.hlsPlaylistUrl || v.stream_url || v.mp4Url;
-      const thumb = v.thumbnail_url || v.thumbnailUrl || (v.mp4Url ? v.mp4Url.replace(/\.mp4$/, '.jpg') : '');
-      merged.push({
-        ...v,
-        video_id: v.video_id || v.id || v._id,
-        id: v.video_id || v.id || v._id,
-        stream_url: streamUrl,
-        hlsPlaylistUrl: streamUrl,
-        streamUrl,
-        mp4Url: v.mp4Url || streamUrl,
-        thumbnail_url: thumb,
-        thumbnailUrl: thumb,
-        duration_sec: v.duration_sec || v.duration || 60,
-        category: v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General'),
-        badge: v.badge || (v.is_uploaded ? 'Cloudinary HLS' : 'HD'),
-        is_uploaded: Boolean(v.is_uploaded)
-      });
-    }
+    const idKey = String(v.video_id || v.id || v._id || '');
+    const pubId = v.cloudinaryPublicId ? String(v.cloudinaryPublicId).trim() : '';
+    const rawUrl = v.hlsPlaylistUrl || v.stream_url || v.mp4Url || '';
+    const normUrl = rawUrl.replace(/[\?#].*$/, '').toLowerCase();
+    const normTitle = (v.title || '').trim().toLowerCase();
+
+    // Deduplicate against multiple keys to prevent any duplicate streams in catalog
+    if (pubId && seenPublicIds.has(pubId)) continue;
+    if (normUrl && seenUrls.has(normUrl)) continue;
+    if (normTitle && seenTitles.has(normTitle)) continue;
+    if (idKey && seenIds.has(idKey)) continue;
+
+    if (idKey) seenIds.add(idKey);
+    if (pubId) seenPublicIds.add(pubId);
+    if (normUrl) seenUrls.add(normUrl);
+    if (normTitle) seenTitles.add(normTitle);
+
+    const streamUrl = v.hlsPlaylistUrl || v.stream_url || v.mp4Url;
+    const thumb = v.thumbnail_url || v.thumbnailUrl || (v.mp4Url ? v.mp4Url.replace(/\.mp4$/, '.jpg') : '');
+    merged.push({
+      ...v,
+      video_id: v.video_id || v.id || v._id,
+      id: v.video_id || v.id || v._id,
+      stream_url: streamUrl,
+      hlsPlaylistUrl: streamUrl,
+      streamUrl,
+      mp4Url: v.mp4Url || streamUrl,
+      thumbnail_url: thumb,
+      thumbnailUrl: thumb,
+      duration_sec: v.duration_sec || v.duration || 60,
+      category: v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General'),
+      badge: v.badge || (v.is_uploaded ? 'Cloudinary HLS' : 'HD'),
+      is_uploaded: Boolean(v.is_uploaded || v.cloudinaryPublicId),
+      cloudinaryPublicId: pubId || v.cloudinaryPublicId || ''
+    });
   }
 
   return merged;
@@ -269,10 +286,38 @@ videoSchema.statics.createVideo = async function (data) {
     durationSec: docData.duration_sec,
     category: docData.category,
     badge: docData.badge,
-    isUploaded: true
+    isUploaded: true,
+    cloudinaryPublicId: docData.cloudinaryPublicId
   });
 
   return savedObj ? { ...savedObj, videoId: numId, video_id: numId, streamUrl: hlsPlaylistUrl } : fallbackItem;
+};
+
+videoSchema.statics.deleteByCloudinaryPublicId = async function (publicId) {
+  if (!publicId) return { success: false, reason: 'No publicId provided' };
+  let dbCount = 0;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const res = await this.updateMany(
+        {
+          $or: [
+            { cloudinaryPublicId: publicId },
+            { hlsPlaylistUrl: { $regex: publicId, $options: 'i' } },
+            { mp4Url: { $regex: publicId, $options: 'i' } }
+          ]
+        },
+        { is_active: false, status: 'failed' }
+      );
+      dbCount = res.modifiedCount || 0;
+    } catch (err) {
+      console.warn('[Video.deleteByCloudinaryPublicId] MongoDB update error:', err.message);
+    }
+  }
+
+  // Also deactivate in disk fallback
+  const fallbackChanged = fallback.deleteVideoByCloudinaryPublicId(publicId);
+
+  return { success: true, publicId, dbCount, fallbackChanged };
 };
 
 const Video = mongoose.models.Video || mongoose.model('Video', videoSchema);

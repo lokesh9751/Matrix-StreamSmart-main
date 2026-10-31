@@ -137,6 +137,19 @@ async function runRouteTests() {
   assert(videosViewRes.renderedView === 'benchmark' && Array.isArray(videosViewRes.viewData?.videos),
     `GET /videos renders EJS 'benchmark' view with ${videosViewRes.viewData?.videos?.length} videos`);
 
+  // 13. Video Catalog Synchronization (GET /api/video/sync)
+  const syncRes = await testEndpoint('GET', '/api/video/sync');
+  assert(syncRes.statusCode === 200 && syncRes.body.success === true,
+    `GET /api/video/sync returns 200 and synchronized video catalog (${syncRes.body?.totalActiveVideos} active)`);
+
+  // 14. Cloudinary Deletion Webhook (POST /api/video/cloudinary-webhook)
+  const webhookRes = await testEndpoint('POST', '/api/video/cloudinary-webhook', {
+    notification_type: 'delete',
+    resources: ['streamsmart_videos/test_delete_asset']
+  });
+  assert(webhookRes.statusCode === 200 && webhookRes.body.success === true,
+    `POST /api/video/cloudinary-webhook processes asset deletion notifications successfully`);
+
   console.log(`\n========================================`);
   console.log(`Route tests: ${total} | Passed: ${passed} | Failed: ${total - passed}`);
   console.log(`========================================\n`);

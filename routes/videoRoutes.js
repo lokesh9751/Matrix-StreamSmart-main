@@ -335,7 +335,137 @@ const fetchAllVideosHandler = async (req, res) => {
 router.get('/', fetchAllVideosHandler);
 router.get('/benchmark', fetchAllVideosHandler);
 
-// ── 4. Get Video Details ────────────────────────────────────────────────────
+// ── 4. Cloudinary Webhook for Asset Deletions & Sync ────────────────────────
+// POST /api/video/cloudinary-webhook
+router.post('/cloudinary-webhook', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const notificationType = payload.notification_type || payload.type || 'delete';
+
+    // Extract public_ids to purge
+    let publicIds = [];
+    if (Array.isArray(payload.resources)) {
+      publicIds = payload.resources.map(r => (typeof r === 'string' ? r : r.public_id)).filter(Boolean);
+    } else if (payload.public_id) {
+      publicIds = [payload.public_id];
+    } else if (Array.isArray(payload.public_ids)) {
+      publicIds = payload.public_ids;
+    }
+
+    const results = [];
+    for (const pubId of publicIds) {
+      const outcome = await Video.deleteByCloudinaryPublicId(pubId);
+      results.push(outcome);
+    }
+
+    console.log(`[Cloudinary Webhook] Processed ${notificationType} event for ${publicIds.length} asset(s):`, publicIds);
+
+    return res.json({
+      success: true,
+      message: `Processed ${notificationType} notification for ${publicIds.length} asset(s)`,
+      notificationType,
+      deletedPublicIds: publicIds,
+      details: results
+    });
+  } catch (error) {
+    console.error('[Cloudinary Webhook Error]:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ── 5. Cloudinary <-> MongoDB Catalog Reconciliation & Synchronization ──────
+// POST /api/video/sync, GET /api/video/sync
+const syncVideosHandler = async (req, res) => {
+  try {
+    const isConfigured = cloudinary.credentials?.isConfigured;
+    let cloudPublicIds = new Set();
+    let cloudResources = [];
+
+    if (isConfigured) {
+      try {
+        const searchResult = await cloudinary.search
+          .expression('resource_type:video AND folder:streamsmart_videos')
+          .sort_by('created_at', 'desc')
+          .max_results(100)
+          .execute();
+
+        cloudResources = searchResult?.resources || [];
+        cloudPublicIds = new Set(cloudResources.map(r => r.public_id));
+      } catch (cErr) {
+        console.warn('[Sync] Cloudinary search API notice (using local repository):', cErr.message);
+      }
+    }
+
+    // Load all local videos
+    const allVideos = await Video.findAll();
+    const purgedFromLocal = [];
+    const importedFromCloud = [];
+
+    // If Cloudinary query succeeded with results, reconcile deletions
+    if (cloudPublicIds.size > 0) {
+      for (const lv of allVideos) {
+        if (lv.cloudinaryPublicId && lv.cloudinaryPublicId.startsWith('streamsmart_videos/')) {
+          if (!cloudPublicIds.has(lv.cloudinaryPublicId)) {
+            await Video.deleteByCloudinaryPublicId(lv.cloudinaryPublicId);
+            purgedFromLocal.push(lv.cloudinaryPublicId);
+          }
+        }
+      }
+
+      // Also import any Cloudinary assets missing from local DB
+      const localPublicIds = new Set(allVideos.map(v => v.cloudinaryPublicId).filter(Boolean));
+      for (const cr of cloudResources) {
+        if (!localPublicIds.has(cr.public_id)) {
+          const mp4Url = cr.secure_url;
+          const hlsPlaylistUrl = cr.secure_url.replace(/\.mp4$/, '.m3u8');
+          const thumbnailUrl = cr.secure_url.replace(/\.mp4$/, '.jpg');
+          const duration = cr.duration ? Math.round(cr.duration) : 60;
+          const uniqueVideoId = Math.floor(Date.now() % 1000000) + importedFromCloud.length;
+
+          const imported = await Video.createVideo({
+            videoId: uniqueVideoId,
+            video_id: uniqueVideoId,
+            title: cr.filename || cr.public_id.split('/').pop(),
+            cloudinaryPublicId: cr.public_id,
+            mp4Url,
+            hlsPlaylistUrl,
+            thumbnailUrl,
+            fileSize: cr.bytes || 0,
+            duration,
+            durationSec: duration,
+            category: 'Uploaded Streams',
+            badge: 'Cloudinary HLS',
+            is_uploaded: true
+          });
+          importedFromCloud.push(imported);
+        }
+      }
+    }
+
+    const currentVideos = await Video.findAll();
+
+    return res.json({
+      success: true,
+      message: isConfigured && cloudPublicIds.size > 0
+        ? 'Catalog reconciled with Cloudinary successfully'
+        : 'Catalog synchronized with local persistent store',
+      cloudinaryConnected: Boolean(isConfigured && cloudPublicIds.size > 0),
+      purgedCount: purgedFromLocal.length,
+      purgedPublicIds: purgedFromLocal,
+      importedCount: importedFromCloud.length,
+      totalActiveVideos: currentVideos.length,
+      videos: currentVideos
+    });
+  } catch (error) {
+    console.error('[Video Sync Error]:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+router.post('/sync', syncVideosHandler);
+router.get('/sync', syncVideosHandler);
+
+// ── 6. Get Video Details ────────────────────────────────────────────────────
 // GET /api/video/:id
 router.get('/:id', async (req, res) => {
   try {

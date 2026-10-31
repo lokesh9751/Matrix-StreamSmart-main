@@ -205,24 +205,26 @@ export function buildComparisonBarData(baselineMetrics, optimizedMetrics) {
   const bStartup = parseFloat(((baselineMetrics?.startup_delay_ms  || baselineMetrics?.startupDelayMs  || 0) / 1000).toFixed(2));
   const bStallDur = parseFloat(Number(baselineMetrics?.total_stall_duration_sec  || baselineMetrics?.totalStallDurationSec  || 0).toFixed(2));
   const bStalls = parseInt(baselineMetrics?.stall_count  || baselineMetrics?.stallCount  || 0, 10);
+  const bBitrateMbps = parseFloat(((baselineMetrics?.avg_bitrate_kbps || baselineMetrics?.avgBitrateKbps || baselineMetrics?.currentBitrateKbps || 5000) / 1000).toFixed(2));
 
   const oStartup = parseFloat(((optimizedMetrics?.startup_delay_ms || optimizedMetrics?.startupDelayMs || 0) / 1000).toFixed(2));
   const oStallDur = parseFloat(Number(optimizedMetrics?.total_stall_duration_sec || optimizedMetrics?.totalStallDurationSec || 0).toFixed(2));
   const oStalls = parseInt(optimizedMetrics?.stall_count || optimizedMetrics?.stallCount || 0, 10);
+  const oBitrateMbps = parseFloat(((optimizedMetrics?.avg_bitrate_kbps || optimizedMetrics?.avgBitrateKbps || optimizedMetrics?.currentBitrateKbps || 2800) / 1000).toFixed(2));
 
   return {
-    labels: ['Startup Delay (s)', 'Total Rebuffering (s)', 'Stall Count'],
+    labels: ['Startup Delay (s)', 'Total Rebuffering (s)', 'Stall Count', 'Avg Bitrate (Mbps)'],
     datasets: [
       {
         label: 'Baseline (Fixed 1080p)',
-        data: [bStartup, bStallDur, bStalls],
+        data: [bStartup, bStallDur, bStalls, bBitrateMbps],
         backgroundColor: CHART_COLORS.baseline,
         borderRadius: 4,
         borderSkipped: false,
       },
       {
         label: 'Optimized (Adaptive ABR)',
-        data: [oStartup, oStallDur, oStalls],
+        data: [oStartup, oStallDur, oStalls, oBitrateMbps],
         backgroundColor: CHART_COLORS.optimized,
         borderRadius: 4,
         borderSkipped: false,

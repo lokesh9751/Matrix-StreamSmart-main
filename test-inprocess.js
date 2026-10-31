@@ -107,7 +107,7 @@ async function testAll() {
   console.log('\n4. Database Models & Schema Verification:');
   const videos = await VideoSample.findAll();
   assert(videos.length >= 2, `VideoSample.findAll returned ${videos.length} videos`);
-  assert(videos[0].title.includes('Big Buck Bunny'), 'Video catalog contains Big Buck Bunny');
+  assert(videos.some(v => v.title.includes('Big Buck Bunny')), 'Video catalog contains Big Buck Bunny');
 
   const profiles = await NetworkProfile.findAll();
   assert(profiles.length >= 4, `NetworkProfile.findAll returned ${profiles.length} profiles`);

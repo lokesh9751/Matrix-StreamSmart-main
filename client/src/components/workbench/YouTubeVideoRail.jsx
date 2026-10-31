@@ -18,8 +18,28 @@ export default function YouTubeVideoRail({
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Deduplicate incoming videos by public_id, stream URL, title, or id
+  const deduplicatedVideos = React.useMemo(() => {
+    const seen = new Set();
+    const result = [];
+    for (const v of videos) {
+      if (!v) continue;
+      const pubId = v.cloudinaryPublicId ? String(v.cloudinaryPublicId).trim() : '';
+      const url = (v.stream_url || v.hlsPlaylistUrl || v.mp4Url || '').replace(/[\?#].*$/, '').toLowerCase();
+      const title = (v.title || '').trim().toLowerCase();
+      const id = String(v.video_id || v.id || v._id || '');
+
+      const key = pubId || url || (title + id);
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(v);
+      }
+    }
+    return result;
+  }, [videos]);
+
   // Extract unique categories (prioritizing 'Uploaded Streams' right after 'All')
-  const rawCategories = [...new Set(videos.map(v => v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General')).filter(Boolean))];
+  const rawCategories = [...new Set(deduplicatedVideos.map(v => v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General')).filter(Boolean))];
   const sortedCategories = ['All'];
   if (rawCategories.includes('Uploaded Streams')) {
     sortedCategories.push('Uploaded Streams');
@@ -31,7 +51,7 @@ export default function YouTubeVideoRail({
   });
 
   // Filter videos based on category and search query
-  const filteredVideos = videos.filter(v => {
+  const filteredVideos = deduplicatedVideos.filter(v => {
     const videoCat = v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General');
     const matchesCategory = activeCategory === 'All' || videoCat === activeCategory;
     const matchesSearch = !searchQuery || (
@@ -56,7 +76,7 @@ export default function YouTubeVideoRail({
           <div className="yt-rail-title">
             <Film size={18} color="var(--primary-purple)" />
             <span>Benchmark Video Catalog</span>
-            <span className="yt-count-badge">{videos.length} Streams</span>
+            <span className="yt-count-badge">{deduplicatedVideos.length} Streams</span>
           </div>
           <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
             Choose an uploaded Cloudinary stream or benchmark catalog video to compare baseline vs. ABR

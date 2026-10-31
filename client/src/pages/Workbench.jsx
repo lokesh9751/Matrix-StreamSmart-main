@@ -83,6 +83,40 @@ export default function Workbench() {
   const [cacheHits, setCacheHits] = useState(0);
   const [cacheMisses, setCacheMisses] = useState(0);
 
+  // References to latest metrics to prevent stale closure in setInterval timers
+  const baselineMetricsRef = useRef(baselineMetrics);
+  const optimizedMetricsRef = useRef(optimizedMetrics);
+
+  useEffect(() => {
+    baselineMetricsRef.current = baselineMetrics;
+  }, [baselineMetrics]);
+
+  useEffect(() => {
+    optimizedMetricsRef.current = optimizedMetrics;
+  }, [optimizedMetrics]);
+
+  // Synchronized callback handlers for live player telemetry
+  const handleBaselineMetrics = (m) => {
+    setBaselineMetrics(m);
+    baselineMetricsRef.current = m;
+    if (typeof m.cacheHits === 'number' && m.cacheHits > 0) {
+      setCacheHits(prev => Math.max(prev, m.cacheHits));
+    }
+    if (typeof m.cacheMisses === 'number' && m.cacheMisses > 0) {
+      setCacheMisses(prev => Math.max(prev, m.cacheMisses));
+    }
+  };
+
+  const handleOptimizedMetrics = (m) => {
+    setOptimizedMetrics(m);
+    optimizedMetricsRef.current = m;
+    if (typeof m.cacheHits === 'number' && m.cacheHits > 0) {
+      setCacheHits(prev => Math.max(prev, m.cacheHits));
+    }
+    if (typeof m.cacheMisses === 'number' && m.cacheMisses > 0) {
+      setCacheMisses(prev => Math.max(prev, m.cacheMisses));
+    }
+  };
   
   // ── Sync with Backend Catalog & Detect Uploaded Video Navigation ───────────
   useEffect(() => {
@@ -104,25 +138,44 @@ export default function Workbench() {
           } catch (_) {}
         }
 
-        // Merge backend videos, verified streams, and pending upload without duplicate keys
+        // Merge backend videos, verified streams, and pending upload with comprehensive deduplication
         const merged = [];
-        const seenKeys = new Set();
+        const seenIds = new Set();
+        const seenPublicIds = new Set();
+        const seenUrls = new Set();
+        const seenTitles = new Set();
 
         const addIfUnique = (v) => {
           if (!v) return;
-          const key = String(v.video_id || v.id || v.title || '');
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            merged.push({
-              ...v,
-              video_id: v.video_id || v.id,
-              stream_url: v.stream_url || v.hlsPlaylistUrl || v.streamUrl || v.mp4Url,
-              thumbnail_url: v.thumbnail_url || v.thumbnailUrl || (v.mp4Url ? v.mp4Url.replace(/\.mp4$/, '.jpg') : ''),
-              duration_sec: v.duration_sec || v.duration || 60,
-              category: v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General'),
-              badge: v.badge || (v.is_uploaded ? 'Cloudinary HLS' : 'HD')
-            });
-          }
+          const idKey = String(v.video_id || v.id || v._id || '');
+          const pubId = v.cloudinaryPublicId ? String(v.cloudinaryPublicId).trim() : '';
+          const rawUrl = v.stream_url || v.hlsPlaylistUrl || v.streamUrl || v.mp4Url || '';
+          const normUrl = rawUrl.replace(/[\?#].*$/, '').toLowerCase();
+          const normTitle = (v.title || '').trim().toLowerCase();
+
+          if (pubId && seenPublicIds.has(pubId)) return;
+          if (normUrl && seenUrls.has(normUrl)) return;
+          if (normTitle && seenTitles.has(normTitle)) return;
+          if (idKey && seenIds.has(idKey)) return;
+
+          if (idKey) seenIds.add(idKey);
+          if (pubId) seenPublicIds.add(pubId);
+          if (normUrl) seenUrls.add(normUrl);
+          if (normTitle) seenTitles.add(normTitle);
+
+          merged.push({
+            ...v,
+            video_id: v.video_id || v.id || v._id,
+            id: v.video_id || v.id || v._id,
+            stream_url: rawUrl,
+            hlsPlaylistUrl: rawUrl,
+            thumbnail_url: v.thumbnail_url || v.thumbnailUrl || (v.mp4Url ? v.mp4Url.replace(/\.mp4$/, '.jpg') : ''),
+            duration_sec: Number(v.duration_sec) || Number(v.duration) || 60,
+            category: v.category || (v.is_uploaded ? 'Uploaded Streams' : 'General'),
+            badge: v.badge || (v.is_uploaded ? 'Cloudinary HLS' : 'HD'),
+            is_uploaded: Boolean(v.is_uploaded || v.cloudinaryPublicId),
+            cloudinaryPublicId: pubId || v.cloudinaryPublicId || ''
+          });
         };
 
         if (pendingUploadedVideo) addIfUnique(pendingUploadedVideo);
@@ -152,9 +205,22 @@ export default function Workbench() {
         if (target) {
           setSelectedVideo(target);
           const videoLen = Number(target.duration_sec) || 0;
-          if (videoLen > 0) {
-            setBenchmarkDuration(Math.min(Math.max(videoLen, MIN_BENCHMARK_DURATION_SEC), MAX_BENCHMARK_DURATION_SEC));
-          }
+          // Maintain configured benchmark duration (default 30s) unless video duration is shorter
+          setBenchmarkDuration(prev => {
+            const currentDur = prev || DEFAULT_BENCHMARK_DURATION_SEC;
+            if (videoLen > 0 && currentDur > videoLen) {
+              return Math.max(MIN_BENCHMARK_DURATION_SEC, videoLen);
+            }
+            return currentDur;
+          });
+          setCountdown(prev => {
+            const currentDur = prev || DEFAULT_BENCHMARK_DURATION_SEC;
+            if (videoLen > 0 && currentDur > videoLen) {
+              return Math.max(MIN_BENCHMARK_DURATION_SEC, videoLen);
+            }
+            return currentDur;
+          });
+
           if (target.is_uploaded || target.category === 'Uploaded Streams') {
             setUploadedTestBanner(`Testing Cloudinary HLS Stream: "${target.title}"`);
           }
@@ -202,13 +268,23 @@ export default function Workbench() {
       setUploadedTestBanner(null);
     }
 
-    // Clamp benchmark duration to the selected video's actual length
+    // Only clamp benchmark duration down if video length is shorter than configured duration
     const videoLen = Number(video.duration_sec) || 0;
-    const clamped = Math.min(
-      Math.max(benchmarkDuration, MIN_BENCHMARK_DURATION_SEC),
-      videoLen > 0 ? videoLen : MAX_BENCHMARK_DURATION_SEC
-    );
-    setBenchmarkDuration(clamped);
+    setBenchmarkDuration(prev => {
+      const current = prev || DEFAULT_BENCHMARK_DURATION_SEC;
+      if (videoLen > 0 && current > videoLen) {
+        return Math.max(MIN_BENCHMARK_DURATION_SEC, videoLen);
+      }
+      return current;
+    });
+    setCountdown(prev => {
+      const current = prev || DEFAULT_BENCHMARK_DURATION_SEC;
+      if (videoLen > 0 && current > videoLen) {
+        return Math.max(MIN_BENCHMARK_DURATION_SEC, videoLen);
+      }
+      return current;
+    });
+
     logAppEvent({
       title: 'Video selected',
       desc: `Workbench video changed to "${video.title}"`,
@@ -256,7 +332,7 @@ export default function Workbench() {
       testDurationSec: benchmarkDuration
     }).catch(() => { });
 
-    // Countdown timer
+    // Countdown timer (counts down 1s by 1s from benchmarkDuration)
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     countdownTimerRef.current = setInterval(() => {
       setCountdown(prev => {
@@ -268,38 +344,50 @@ export default function Workbench() {
       });
     }, 1000);
 
-    // Chart telemetry sampler
+    // Chart telemetry sampler (reads from refs to prevent React state closure staleness)
     if (seriesTimerRef.current) clearInterval(seriesTimerRef.current);
     seriesTimerRef.current = setInterval(() => {
       elapsedSecRef.current += 1;
       const t = elapsedSecRef.current;
 
-      const bBuf = typeof baselineMetrics.currentBufferSec === 'number'
-        ? Number(baselineMetrics.currentBufferSec.toFixed(1))
+      const bMetrics = baselineMetricsRef.current || {};
+      const oMetrics = optimizedMetricsRef.current || {};
+
+      const bBuf = typeof bMetrics.currentBufferSec === 'number'
+        ? Number(bMetrics.currentBufferSec.toFixed(1))
         : 0;
-      const oBuf = typeof optimizedMetrics.currentBufferSec === 'number'
-        ? Number(optimizedMetrics.currentBufferSec.toFixed(1))
+      const oBuf = typeof oMetrics.currentBufferSec === 'number'
+        ? Number(oMetrics.currentBufferSec.toFixed(1))
         : 0;
+
+      const bBitrate = bMetrics.currentBitrateKbps || 5000;
+      const oBitrate = oMetrics.currentBitrateKbps || 2800;
 
       setBaselineSeries(prev => [
         ...prev.slice(-30),
         {
+          elapsed: t,
           timestamp: `${t}s`,
+          buffer: bBuf,
           bufferSec: bBuf,
-          bitrateKbps: baselineMetrics.currentBitrateKbps || 5000
+          bitrate: bBitrate,
+          bitrateKbps: bBitrate
         }
       ]);
 
       setOptimizedSeries(prev => [
         ...prev.slice(-30),
         {
+          elapsed: t,
           timestamp: `${t}s`,
+          buffer: oBuf,
           bufferSec: oBuf,
-          bitrateKbps: optimizedMetrics.currentBitrateKbps || 2800
+          bitrate: oBitrate,
+          bitrateKbps: oBitrate
         }
       ]);
 
-      // Simulate cache segment fetches
+      // Continuous edge cache simulation
       if (Math.random() < cacheHitProb) {
         setCacheHits(h => h + 1);
       } else {
@@ -311,18 +399,32 @@ export default function Workbench() {
   // ── Stop Benchmark Session ──────────────────────────────────────────────
   const stopBenchmark = () => {
     setIsBenchmarking(false);
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    if (seriesTimerRef.current) clearInterval(seriesTimerRef.current);
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    if (seriesTimerRef.current) {
+      clearInterval(seriesTimerRef.current);
+      seriesTimerRef.current = null;
+    }
 
     baselinePlayerRef.current?.pause();
     optimizedPlayerRef.current?.pause();
 
-    const bStalls = baselineMetrics.stallCount || (bandwidthKbps < 3000 ? 3 : 0);
-    const bRebuf = baselineMetrics.totalStallDurationSec || (bandwidthKbps < 3000 ? 8.2 : 0);
-    const oStalls = optimizedMetrics.stallCount || 0;
-    const oRebuf = optimizedMetrics.totalStallDurationSec || 0;
+    const bMetrics = baselineMetricsRef.current || baselineMetrics;
+    const oMetrics = optimizedMetricsRef.current || optimizedMetrics;
+
+    const bStalls = bMetrics.stallCount || (bandwidthKbps < 3000 ? 3 : 0);
+    const bRebuf = bMetrics.totalStallDurationSec || (bandwidthKbps < 3000 ? 8.2 : 0);
+    const oStalls = oMetrics.stallCount || 0;
+    const oRebuf = oMetrics.totalStallDurationSec || 0;
     const stallsAvoided = Math.max(0, bStalls - oStalls);
     const rebufSaved = Math.max(0, bRebuf - oRebuf);
+
+    const totalRequests = cacheHits + cacheMisses;
+    const hitRate = totalRequests > 0
+      ? Math.round((cacheHits / totalRequests) * 100)
+      : Math.round(cacheHitProb * 100);
 
     const sessionSummary = {
       session_id: sessionId || `ss-${Date.now()}`,
@@ -330,21 +432,21 @@ export default function Workbench() {
       video_title: selectedVideo.title,
       profile_name: selectedProfile.profile_name,
       status: 'COMPLETED',
-      duration_sec: benchmarkDuration - countdown,
+      duration_sec: elapsedSecRef.current || (benchmarkDuration - countdown) || benchmarkDuration,
       baseline_stalls: bStalls,
       baseline_rebuffer_sec: parseFloat(bRebuf.toFixed(1)),
-      baseline_startup_ms: baselineMetrics.startupDelayMs || 1200,
-      baseline_resolution: baselineMetrics.currentResolution || '1080p',
+      baseline_startup_ms: bMetrics.startupDelayMs || 1200,
+      baseline_resolution: bMetrics.currentResolution || '1080p',
       optimized_stalls: oStalls,
       optimized_rebuffer_sec: parseFloat(oRebuf.toFixed(1)),
-      optimized_startup_ms: optimizedMetrics.startupDelayMs || 360,
-      optimized_resolution: optimizedMetrics.currentResolution || '720p',
+      optimized_startup_ms: oMetrics.startupDelayMs || 360,
+      optimized_resolution: oMetrics.currentResolution || '720p',
       stalls_avoided: stallsAvoided,
       rebuffer_saved_sec: parseFloat(rebufSaved.toFixed(1)),
-      cache_hit_rate: Math.round((cacheHits / Math.max(1, cacheHits + cacheMisses)) * 100) || Math.round(cacheHitProb * 100),
+      cache_hit_rate: hitRate,
       total_cache_hits: cacheHits || 28,
       total_cache_misses: cacheMisses || 12,
-      switches: optimizedMetrics.qualitySwitches || 3
+      switches: oMetrics.qualitySwitches || 3
     };
 
     setCompletedSession(sessionSummary);
@@ -365,8 +467,14 @@ export default function Workbench() {
 
   const resetWorkbench = () => {
     setIsBenchmarking(false);
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    if (seriesTimerRef.current) clearInterval(seriesTimerRef.current);
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    if (seriesTimerRef.current) {
+      clearInterval(seriesTimerRef.current);
+      seriesTimerRef.current = null;
+    }
     setCountdown(benchmarkDuration);
     setCompletedSession(null);
     setBaselineSeries([]);
@@ -375,8 +483,16 @@ export default function Workbench() {
     setCacheMisses(0);
     elapsedSecRef.current = 0;
 
-    baselinePlayerRef.current?.retry();
-    optimizedPlayerRef.current?.retry();
+    if (baselinePlayerRef.current) {
+      baselinePlayerRef.current.pause();
+      baselinePlayerRef.current.seek(0);
+      baselinePlayerRef.current.retry?.();
+    }
+    if (optimizedPlayerRef.current) {
+      optimizedPlayerRef.current.pause();
+      optimizedPlayerRef.current.seek(0);
+      optimizedPlayerRef.current.retry?.();
+    }
 
     logAppEvent({
       title: 'Workbench reset',
@@ -412,6 +528,9 @@ export default function Workbench() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span className={`badge ${isBenchmarking ? 'badge-primary' : (completedSession ? 'badge-success' : 'badge-secondary')}`}>
+              {isBenchmarking ? `RUNNING (${countdown}s)` : (completedSession ? 'COMPLETED' : 'READY')}
+            </span>
             {!isBenchmarking ? (
               <button className="btn btn-primary" onClick={startBenchmark}>
                 <Play size={14} fill="currentColor" />
@@ -423,7 +542,7 @@ export default function Workbench() {
                 <span>Stop Benchmark ({countdown}s)</span>
               </button>
             )}
-            <button className="btn btn-secondary" onClick={resetWorkbench}>
+            <button className="btn btn-secondary" onClick={resetWorkbench} disabled={isBenchmarking}>
               <RotateCcw size={14} />
               <span>Reset</span>
             </button>
@@ -588,7 +707,7 @@ export default function Workbench() {
             cacheHitProb,
             sessionId
           }}
-          onMetrics={(m) => setBaselineMetrics(m)}
+          onMetrics={handleBaselineMetrics}
           sessionId={sessionId}
         />
 
@@ -604,7 +723,7 @@ export default function Workbench() {
             cacheHitProb,
             sessionId
           }}
-          onMetrics={(m) => setOptimizedMetrics(m)}
+          onMetrics={handleOptimizedMetrics}
           sessionId={sessionId}
         />
       </div>
@@ -642,37 +761,40 @@ export default function Workbench() {
               </select>
             </div>
 
-            {/* Benchmark Duration (derived from video metadata) */}
+            {/* Benchmark Duration (Custom duration with 30s default) */}
             <div className="form-group" style={{ marginBottom: '16px' }}>
               <label className="form-label">Benchmark Duration</label>
               <input
                 className="form-control"
                 type="number"
                 min={MIN_BENCHMARK_DURATION_SEC}
-                max={Math.max(MIN_BENCHMARK_DURATION_SEC, Number(selectedVideo.duration_sec) || MAX_BENCHMARK_DURATION_SEC)}
+                max={MAX_BENCHMARK_DURATION_SEC}
                 step={5}
                 value={draftDuration !== null ? draftDuration : String(benchmarkDuration)}
                 onChange={(e) => {
                   const val = e.target.value;
-                  // Allow empty string during editing, don't clamp yet
                   setDraftDuration(val);
                 }}
                 onBlur={(e) => {
                   const val = e.target.value;
-                  const v = val === '' || val === null ? benchmarkDuration : Number(val);
-                  const videoLen = Number(selectedVideo.duration_sec) || 0;
+                  const v = val === '' || val === null ? DEFAULT_BENCHMARK_DURATION_SEC : Number(val);
+                  const videoLen = Number(selectedVideo?.duration_sec) || 0;
+                  const maxLimit = videoLen > 0 ? Math.min(videoLen, MAX_BENCHMARK_DURATION_SEC) : MAX_BENCHMARK_DURATION_SEC;
                   const clamped = Math.min(
                     Math.max(v, MIN_BENCHMARK_DURATION_SEC),
-                    videoLen > 0 ? videoLen : MAX_BENCHMARK_DURATION_SEC
+                    maxLimit
                   );
                   setDraftDuration(null);
                   setBenchmarkDuration(clamped);
+                  if (!isBenchmarking) {
+                    setCountdown(clamped);
+                  }
                 }}
                 disabled={isBenchmarking}
               />
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Range: {MIN_BENCHMARK_DURATION_SEC}s – {Number(selectedVideo.duration_sec) || MAX_BENCHMARK_DURATION_SEC}s
-                {selectedVideo.duration_formatted ? ` (Video: ${selectedVideo.duration_formatted})` : ''}
+                Configured duration: {benchmarkDuration}s • Range: {MIN_BENCHMARK_DURATION_SEC}s – {MAX_BENCHMARK_DURATION_SEC}s
+                {selectedVideo?.duration_formatted ? ` (Stream: ${selectedVideo.duration_formatted})` : ''}
               </div>
             </div>
 
@@ -749,6 +871,155 @@ export default function Workbench() {
               />
               <div className="slider-hint">Simulated POP: 12ms hit / 260ms origin fetch</div>
             </div>
+          </div>
+
+          {/* ── Benchmark Control Action Panel (Directly Below Configuration) ── */}
+          <div className="card" style={{ marginTop: '16px' }}>
+            <div className="card-header" style={{ marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Activity size={18} color="var(--primary-purple)" />
+                <div className="card-title">Benchmark Controls</div>
+              </div>
+              <span className={`badge ${isBenchmarking ? 'badge-primary' : (completedSession ? 'badge-success' : 'badge-secondary')}`}>
+                {isBenchmarking ? `RUNNING (${countdown}s)` : (completedSession ? 'COMPLETED' : 'READY')}
+              </span>
+            </div>
+
+            {/* Start and Stop Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                {/* Start Benchmark – Purple primary button with a play icon */}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{
+                    padding: '12px 14px',
+                    fontSize: '13.5px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    background: 'var(--primary-purple)',
+                    color: '#FFFFFF',
+                    border: '1px solid var(--primary-purple)',
+                    borderRadius: 'var(--radius-md)',
+                    opacity: isBenchmarking ? 0.6 : 1,
+                    cursor: isBenchmarking ? 'not-allowed' : 'pointer',
+                    boxShadow: !isBenchmarking ? '0 2px 6px rgba(112, 96, 181, 0.3)' : 'none',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onClick={startBenchmark}
+                  disabled={isBenchmarking}
+                  title={isBenchmarking ? 'Benchmark running' : 'Start dual-player benchmark test'}
+                >
+                  <Play size={16} fill="currentColor" />
+                  <span>{isBenchmarking ? 'Running…' : 'Start Benchmark'}</span>
+                </button>
+
+                {/* Stop Benchmark – Red secondary/destructive button with a stop icon */}
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{
+                    padding: '12px 14px',
+                    fontSize: '13.5px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    background: 'var(--error)',
+                    color: '#FFFFFF',
+                    border: '1px solid var(--error)',
+                    borderRadius: 'var(--radius-md)',
+                    opacity: !isBenchmarking ? 0.6 : 1,
+                    cursor: !isBenchmarking ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onClick={stopBenchmark}
+                  disabled={!isBenchmarking}
+                  title={!isBenchmarking ? 'Benchmark not active' : 'Halt active benchmark'}
+                >
+                  <Square size={16} fill="currentColor" />
+                  <span>Stop Benchmark</span>
+                </button>
+              </div>
+
+              {/* Reset Benchmark */}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{
+                  width: '100%',
+                  padding: '9px 14px',
+                  fontSize: '12.5px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+                onClick={resetWorkbench}
+                disabled={isBenchmarking}
+                title="Reset benchmark state, clear charts, and rewind players"
+              >
+                <RotateCcw size={14} />
+                <span>Reset Benchmark</span>
+              </button>
+            </div>
+
+            {/* Active Live Progress Indicator */}
+            {isBenchmarking && (
+              <div style={{
+                marginTop: '14px',
+                padding: '10px 12px',
+                background: 'rgba(112, 96, 181, 0.08)',
+                border: '1px solid rgba(112, 96, 181, 0.25)',
+                borderRadius: '8px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--primary-purple)', textTransform: 'uppercase' }}>
+                    Active Benchmark Trial
+                  </span>
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary-purple)', fontFamily: 'var(--font-mono)' }}>
+                    {countdown}s remaining
+                  </span>
+                </div>
+                <div className="progress-bar-wrap" style={{ height: '6px', background: 'rgba(112, 96, 181, 0.15)' }}>
+                  <div
+                    className="progress-bar-fill"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, ((benchmarkDuration - countdown) / benchmarkDuration) * 100))}%`,
+                      background: 'var(--primary-purple)',
+                      transition: 'width 1s linear'
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  Configuration locked • Real-time telemetry streaming into dual graphs
+                </div>
+              </div>
+            )}
+
+            {completedSession && !isBenchmarking && (
+              <div style={{
+                marginTop: '12px',
+                padding: '10px 12px',
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.25)',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                  <strong>Run Completed:</strong> {completedSession.duration_sec}s trial
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--success)', fontWeight: 700 }}>
+                  {completedSession.stalls_avoided} Stalls Avoided
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
