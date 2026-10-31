@@ -874,11 +874,11 @@ export default function Workbench() {
           </div>
 
           {/* ── Benchmark Control Action Panel (Directly Below Configuration) ── */}
-          <div className="card" style={{ marginTop: '16px' }}>
-            <div className="card-header" style={{ marginBottom: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Activity size={18} color="var(--primary-purple)" />
-                <div className="card-title">Benchmark Controls</div>
+          <div className="card benchmark-controls-card">
+            <div className="card-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                <Activity size={18} color="var(--primary-purple)" style={{ flexShrink: 0 }} />
+                <div className="card-title" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Benchmark Controls</div>
               </div>
               <span className={`badge ${isBenchmarking ? 'badge-primary' : (completedSession ? 'badge-success' : 'badge-secondary')}`}>
                 {isBenchmarking ? `RUNNING (${countdown}s)` : (completedSession ? 'COMPLETED' : 'READY')}
@@ -886,29 +886,12 @@ export default function Workbench() {
             </div>
 
             {/* Start and Stop Buttons */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div className="benchmark-buttons-wrapper">
+              <div className="benchmark-actions-group">
                 {/* Start Benchmark – Purple primary button with a play icon */}
                 <button
                   type="button"
-                  className="btn btn-primary"
-                  style={{
-                    padding: '12px 14px',
-                    fontSize: '13.5px',
-                    fontWeight: 700,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    background: 'var(--primary-purple)',
-                    color: '#FFFFFF',
-                    border: '1px solid var(--primary-purple)',
-                    borderRadius: 'var(--radius-md)',
-                    opacity: isBenchmarking ? 0.6 : 1,
-                    cursor: isBenchmarking ? 'not-allowed' : 'pointer',
-                    boxShadow: !isBenchmarking ? '0 2px 6px rgba(112, 96, 181, 0.3)' : 'none',
-                    transition: 'all 0.2s ease'
-                  }}
+                  className="btn benchmark-action-btn benchmark-action-btn-start"
                   onClick={startBenchmark}
                   disabled={isBenchmarking}
                   title={isBenchmarking ? 'Benchmark running' : 'Start dual-player benchmark test'}
@@ -920,23 +903,7 @@ export default function Workbench() {
                 {/* Stop Benchmark – Red secondary/destructive button with a stop icon */}
                 <button
                   type="button"
-                  className="btn btn-danger"
-                  style={{
-                    padding: '12px 14px',
-                    fontSize: '13.5px',
-                    fontWeight: 700,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    background: 'var(--error)',
-                    color: '#FFFFFF',
-                    border: '1px solid var(--error)',
-                    borderRadius: 'var(--radius-md)',
-                    opacity: !isBenchmarking ? 0.6 : 1,
-                    cursor: !isBenchmarking ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease'
-                  }}
+                  className="btn benchmark-action-btn benchmark-action-btn-stop"
                   onClick={stopBenchmark}
                   disabled={!isBenchmarking}
                   title={!isBenchmarking ? 'Benchmark not active' : 'Halt active benchmark'}
@@ -949,16 +916,7 @@ export default function Workbench() {
               {/* Reset Benchmark */}
               <button
                 type="button"
-                className="btn btn-secondary"
-                style={{
-                  width: '100%',
-                  padding: '9px 14px',
-                  fontSize: '12.5px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px'
-                }}
+                className="btn btn-secondary benchmark-reset-btn"
                 onClick={resetWorkbench}
                 disabled={isBenchmarking}
                 title="Reset benchmark state, clear charts, and rewind players"
@@ -1030,7 +988,7 @@ export default function Workbench() {
             optimizedSeries={optimizedSeries}
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
+          <div className="workbench-charts-grid">
             <PerformanceBarChart
               baselineMetrics={baselineMetrics}
               optimizedMetrics={optimizedMetrics}

@@ -115,7 +115,7 @@ Manages two isolated instances of HLS.js and applies simulated network throttlin
     * **Edge Cache Delay:** Evaluates hit probability: **$12\text{ms}$** for edge hits, **$260\text{ms}$** for origin misses.
     * **Packet Loss:** Artificially triggers 408 timeout errors if a random float falls within the packet loss percentage.
 * **`createBaselinePlayer({ videoEl, src, networkConfig, onMetrics, onLevels, onError })`**
-  * *Configuration:* Initialized with `autoLevelEnabled: false`. Upon manifest load, pins playback to `hls.levels.length - 1` (Locked 1080p).
+  * *Configuration:* Initialized with manual quality lock (`hls.currentLevel = highest`). Upon manifest load, pins playback to `hls.levels.length - 1` (Locked 1080p).
   * *Methods Returned:* `destroy()`, `getHls()`, `getTracker()`, `setQuality(levelIndex)`.
 * **`createOptimizedPlayer({ videoEl, src, networkConfig, onMetrics, onLevels, onABRStateChange, onQualitySwitch, onError })`**
   * *Configuration:* Starts at Level 0 for fast startup, activates the 1,500ms `runABRTick()` interval, and maps ABR decisions directly to `hls.currentLevel`. Emits live diagnostic payloads (`BUFFER_RISK_DOWNSHIFT`, `STABLE_BANDWIDTH_UPSHIFT`, `STEADY_STATE_HOLD`).

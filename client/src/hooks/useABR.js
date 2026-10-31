@@ -84,11 +84,6 @@ export default function useABR({
       return;
     }
 
-    // Ensure built-in HLS.js ABR is disabled so it doesn't conflict
-    if (hlsInstance.autoLevelEnabled) {
-      hlsInstance.autoLevelEnabled = false;
-    }
-
     // 3. Run Custom ABR Decision Heuristic
     const recommendation = recommendQuality({
       currentLevel: activeLevelIndex,

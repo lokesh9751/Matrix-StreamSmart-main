@@ -56,8 +56,13 @@ const OptimizedPlayer = forwardRef(function OptimizedPlayer(
   const actualLevelRef = useRef(-1);
   const hlsRef = useRef(null);
 
-  // Get actual playback level from HLS.js (used for UI sync in Auto mode)
+  // Get actual playback level from HLS.js or active player state (used for UI sync in Auto mode)
   const getActualPlaybackLevel = useCallback(() => {
+    if (playerRef.current?.getCurrentLevel) {
+      const lvl = playerRef.current.getCurrentLevel();
+      if (typeof lvl === 'number' && lvl >= 0) return lvl;
+    }
+    if (actualLevelRef.current >= 0) return actualLevelRef.current;
     const hls = hlsRef.current;
     if (!hls || !hls.levels || hls.levels.length === 0) return -1;
     return hls.currentLevel >= 0 ? hls.currentLevel : (hls.nextLevel >= 0 ? hls.nextLevel : 0);
@@ -75,6 +80,7 @@ const OptimizedPlayer = forwardRef(function OptimizedPlayer(
     getCurrentTime: () => playerRef.current?.getCurrentTime() || 0,
     getVideo: () => videoRef.current,
     getHls: () => playerRef.current?.getHls(),
+    getCurrentLevel: () => playerRef.current?.getCurrentLevel?.() ?? actualLevelRef.current,
   }));
 
   const handleSelectQuality = (levelIndex) => {
@@ -142,24 +148,59 @@ const OptimizedPlayer = forwardRef(function OptimizedPlayer(
         fallbackMp4Url: fallbackMp4Url || (typeof src === 'object' ? src?.mp4Url : undefined),
         networkConfig: { ...networkConfig, sessionId },
         onMetrics: (m) => {
-          setMetrics(m);
+          setMetrics(prev => ({
+            ...m,
+            currentResolution: (m.currentResolution && m.currentResolution !== '--')
+              ? m.currentResolution
+              : prev.currentResolution,
+            currentBitrateKbps: m.currentBitrateKbps > 0
+              ? m.currentBitrateKbps
+              : prev.currentBitrateKbps,
+          }));
           setStatus(m.currentlyStalled ? 'stalled' : m.isStarted ? 'playing' : 'loading');
           onMetrics && onMetrics(m);
         },
         onLevels: (lvls) => {
           setLevels(lvls || []);
+          const actual = playerRef.current?.getCurrentLevel ? playerRef.current.getCurrentLevel() : 0;
+          if (lvls && lvls[actual]) {
+            const lvl = lvls[actual];
+            actualLevelRef.current = actual;
+            setMetrics(prev => ({
+              ...prev,
+              currentResolution: lvl.height ? `${lvl.height}p` : `L${actual}`,
+              currentBitrateKbps: Math.round((lvl.bitrate || lvl.averageBitrate || 0) / 1000),
+            }));
+          }
         },
         onABRStateChange: (state) => {
           setAbrState(state);
+          if (isAutoMode && typeof state.currentLevelIndex === 'number' && state.currentLevelIndex >= 0) {
+            actualLevelRef.current = state.currentLevelIndex;
+            const hls = hlsRef.current;
+            if (hls && hls.levels && hls.levels[state.currentLevelIndex]) {
+              const lvl = hls.levels[state.currentLevelIndex];
+              const res = lvl.height ? `${lvl.height}p` : `L${state.currentLevelIndex}`;
+              const br = Math.round((lvl.bitrate || lvl.averageBitrate || 0) / 1000);
+              setMetrics(prev => ({
+                ...prev,
+                currentResolution: res,
+                currentBitrateKbps: br > 0 ? br : prev.currentBitrateKbps,
+              }));
+            }
+          }
         },
         onQualitySwitch: (switchItem) => {
           setSwitchHistory(prev => [switchItem, ...prev.slice(0, 14)]);
           setLastSwitchTime(switchItem.timestamp);
-          // Update actual level ref on switch
-          const hls = hlsRef.current;
-          if (hls && hls.levels && hls.levels.length > 0) {
-            actualLevelRef.current = hls.currentLevel >= 0 ? hls.currentLevel : (hls.nextLevel >= 0 ? hls.nextLevel : 0);
+          if (typeof switchItem.toLevelIndex === 'number' && switchItem.toLevelIndex >= 0) {
+            actualLevelRef.current = switchItem.toLevelIndex;
           }
+          setMetrics(prev => ({
+            ...prev,
+            currentResolution: switchItem.toLevel || prev.currentResolution,
+            qualitySwitches: prev.qualitySwitches + 1
+          }));
         },
         onError: (err) => {
           setStatus('error');

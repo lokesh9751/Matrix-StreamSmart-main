@@ -118,12 +118,6 @@ export function createTelemetryTracker({ playerType, sessionId, onMetricsUpdate 
     const bufferSec = readBuffer();
     state.currentBufferSec = bufferSec;
 
-    // Active stall ongoing check
-    if (state.currentlyStalled && state.stallStart) {
-      const activeDuration = performance.now() - state.stallStart;
-      // Active stall reflected in total live counter
-    }
-
     const elapsed = state.started && state.startTime
       ? (performance.now() - state.startTime) / 1000
       : 0;
@@ -152,7 +146,10 @@ export function createTelemetryTracker({ playerType, sessionId, onMetricsUpdate 
       state.initTime = performance.now();
     }
     if (data.levels && data.levels.length > 0) {
-      const initialLevel = hls.currentLevel >= 0 ? data.levels[hls.currentLevel] : data.levels[0];
+      const activeIdx = (hls && hls.currentLevel >= 0)
+        ? hls.currentLevel
+        : (hls && hls.startLevel >= 0 ? hls.startLevel : 0);
+      const initialLevel = data.levels[activeIdx] || data.levels[0];
       if (initialLevel) {
         state.currentResolution = initialLevel.height ? `${initialLevel.height}p` : 'Auto';
         state.currentBitrateKbps = Math.round((initialLevel.bitrate || initialLevel.averageBitrate || 0) / 1000);
@@ -175,18 +172,46 @@ export function createTelemetryTracker({ playerType, sessionId, onMetricsUpdate 
     }
 
     // 2. Measure actual segment download throughput from stats
-    if (data?.stats?.loading?.end && data?.stats?.loading?.first && data?.stats?.total) {
-      const durationMs = data.stats.loading.end - data.stats.loading.first;
-      if (durationMs > 10) {
-        const measuredBwKbps = Math.round(((data.stats.total * 8) / durationMs));
-        state.downloadBandwidthKbps = measuredBwKbps;
+    let durationMs = 0;
+    const stats = data?.stats;
+    if (stats) {
+      if (stats.loading && stats.loading.end > 0) {
+        const start = stats.loading.first > 0 ? stats.loading.first : stats.loading.start;
+        if (start > 0 && stats.loading.end > start) {
+          durationMs = stats.loading.end - start;
+        }
+      } else if (stats.tload > 0) {
+        const start = stats.tfirst > 0 ? stats.tfirst : stats.trequest;
+        if (start > 0 && stats.tload > start) {
+          durationMs = stats.tload - start;
+        }
+      }
+      const totalBytes = stats.total || stats.loaded || 0;
+      if (totalBytes > 0 && durationMs > 10) {
+        const measuredBwKbps = Math.round((totalBytes * 8) / durationMs);
+        if (measuredBwKbps > 0) {
+          state.downloadBandwidthKbps = measuredBwKbps;
+        }
+      }
+    }
+  }
+
+  function onLevelSwitching(event, data) {
+    if (hls && hls.levels && typeof data?.level === 'number' && hls.levels[data.level]) {
+      const lv = hls.levels[data.level];
+      if (lv.height) {
+        state.currentResolution = `${lv.height}p`;
+      }
+      const br = Math.round((lv.bitrate || lv.averageBitrate || 0) / 1000);
+      if (br > 0) {
+        state.currentBitrateKbps = br;
       }
     }
   }
 
   function onLevelSwitched(event, data) {
     state.qualitySwitches++;
-    if (hls && hls.levels && hls.levels[data.level]) {
+    if (hls && hls.levels && typeof data?.level === 'number' && hls.levels[data.level]) {
       const lv = hls.levels[data.level];
       state.currentBitrateKbps = Math.round((lv.bitrate || lv.averageBitrate || 0) / 1000);
       state.currentResolution  = lv.height ? `${lv.height}p` : `L${data.level}`;
@@ -218,6 +243,7 @@ export function createTelemetryTracker({ playerType, sessionId, onMetricsUpdate 
       const Hls = hls.constructor;
       hls.on(Hls.Events.MANIFEST_PARSED, onManifestParsed);
       hls.on(Hls.Events.FRAG_LOADED,     onFragLoaded);
+      hls.on(Hls.Events.LEVEL_SWITCHING, onLevelSwitching);
       hls.on(Hls.Events.LEVEL_SWITCHED,  onLevelSwitched);
       hls.on(Hls.Events.ERROR,           onError);
     }
@@ -245,6 +271,7 @@ export function createTelemetryTracker({ playerType, sessionId, onMetricsUpdate 
       const Hls = hls.constructor;
       hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed);
       hls.off(Hls.Events.FRAG_LOADED,     onFragLoaded);
+      hls.off(Hls.Events.LEVEL_SWITCHING, onLevelSwitching);
       hls.off(Hls.Events.LEVEL_SWITCHED,  onLevelSwitched);
       hls.off(Hls.Events.ERROR,           onError);
     }

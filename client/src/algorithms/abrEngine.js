@@ -11,8 +11,8 @@
  *  - Buffer Occupancy: B = video.buffered.end(i) - video.currentTime
  *  - Rule 1 (Emergency Downshift): B < 3.5 s -> Step down to prevent buffer starvation (BUFFER_RISK_DOWNSHIFT)
  *  - Rule 2 (Bandwidth Limit Downshift): Current bitrate > T_safe -> Immediately downshift to sustainable tier (BANDWIDTH_LIMIT)
- *  - Rule 3 (Conservative Upshift): B > 10.0 s AND nextLevel.bitrate <= T_safe -> Step up one level (STABLE_BANDWIDTH_UPSHIFT)
- *  - Rule 4 (Steady State): 3.5 s <= B <= 10.0 s (or bandwidth insufficient) -> Hold current level (STEADY_STATE_HOLD)
+ *  - Rule 3 (Intelligent Upshift): B >= 4.0 s AND highestSustainable > currentLevel -> Step up towards highest sustainable rendition (STABLE_BANDWIDTH_UPSHIFT)
+ *  - Rule 4 (Steady State): Hold current level when conditions are steady (STEADY_STATE_HOLD)
  *
  * Designed to map dynamically to actual manifest levels (hls.levels)
  * rather than assuming fixed resolutions.
@@ -30,6 +30,7 @@ export const QUALITY_LADDER = [
 export const ABR_INTERVAL_MS       = 1500; // Decision loop runs every 1.5 seconds
 export const BUFFER_LOW_THRESHOLD  = 3.5;  // seconds: emergency downshift trigger
 export const BUFFER_HIGH_THRESHOLD = 10.0; // seconds: conservative upshift requirement
+export const BUFFER_UP_THRESHOLD   = 4.0;  // seconds: minimum buffer headroom to consider upshift
 export const BANDWIDTH_SAFETY      = 0.75; // 75% safe bandwidth threshold
 
 /**
@@ -96,8 +97,8 @@ export function mapHlsLevels(hlsLevels) {
   }
 
   return hlsLevels.map((lvl, index) => {
-    const height = lvl.height || (lvl.attrs?.RESOLUTION ? parseInt(lvl.attrs.RESOLUTION.split('x')[1]) : 0);
-    const width = lvl.width || (lvl.attrs?.RESOLUTION ? parseInt(lvl.attrs.RESOLUTION.split('x')[0]) : 0);
+    const height = lvl.height || (lvl.attrs?.RESOLUTION ? parseInt(lvl.attrs.RESOLUTION.split('x')[1], 10) : 0);
+    const width = lvl.width || (lvl.attrs?.RESOLUTION ? parseInt(lvl.attrs.RESOLUTION.split('x')[0], 10) : 0);
     const bitrateBps = lvl.bitrate || lvl.averageBitrate || 0;
     const bitrateKbps = Math.round(bitrateBps / 1000) || QUALITY_LADDER[Math.min(index, QUALITY_LADDER.length - 1)].bitrateKbps;
 
@@ -123,12 +124,29 @@ export function mapHlsLevels(hlsLevels) {
 }
 
 /**
+ * Finds the highest rendition index whose bitrateKbps <= safeBandwidthKbps.
+ *
+ * @param {Array} ladder - Rendition ladder
+ * @param {number} safeBandwidthKbps - Safe bandwidth in Kbps
+ * @returns {number} Highest sustainable level index
+ */
+export function getHighestSustainableLevel(ladder, safeBandwidthKbps) {
+  if (!ladder || ladder.length === 0) return 0;
+  for (let i = ladder.length - 1; i >= 0; i--) {
+    if (ladder[i].bitrateKbps <= safeBandwidthKbps) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+/**
  * StreamSmart Custom ABR Decision Engine
  *
  * Evaluates current buffer occupancy and bandwidth, applying 4-state heuristic rules:
  * 1. BUFFER_RISK_DOWNSHIFT (B < 3.5s)
  * 2. BANDWIDTH_LIMIT (Current bitrate > Safe Bandwidth)
- * 3. STABLE_BANDWIDTH_UPSHIFT (B > 10.0s AND candidate <= Safe Bandwidth)
+ * 3. STABLE_BANDWIDTH_UPSHIFT (B >= 4.0s AND candidate <= Safe Bandwidth)
  * 4. STEADY_STATE_HOLD (Stable buffer and bandwidth)
  *
  * @param {object} params
@@ -136,6 +154,7 @@ export function mapHlsLevels(hlsLevels) {
  * @param {number} params.bufferSec       - Current buffer occupancy in seconds
  * @param {number} params.bandwidthKbps   - Available / simulated bandwidth in Kbps
  * @param {Array}  [params.hlsLevels]     - Manifest levels from HLS.js
+ * @param {Array}  [params.qualityLadder] - Explicit custom ladder (backward compat)
  * @returns {{
  *   nextLevel: number,
  *   reason: 'BUFFER_RISK_DOWNSHIFT' | 'BANDWIDTH_LIMIT' | 'STABLE_BANDWIDTH_UPSHIFT' | 'STEADY_STATE_HOLD',
@@ -147,8 +166,8 @@ export function mapHlsLevels(hlsLevels) {
  *   isSwitch: boolean
  * }}
  */
-export function recommendQuality({ currentLevel = 0, bufferSec = 0, bandwidthKbps = 4500, hlsLevels }) {
-  const ladder = mapHlsLevels(hlsLevels);
+export function recommendQuality({ currentLevel = 0, bufferSec = 0, bandwidthKbps = 4500, hlsLevels, qualityLadder }) {
+  const ladder = qualityLadder || mapHlsLevels(hlsLevels);
   const maxLevel = Math.max(0, ladder.length - 1);
   const safeCurrentLevel = Math.max(0, Math.min(Number(currentLevel) || 0, maxLevel));
   const safeBW = calculateSafeBandwidth(bandwidthKbps);
@@ -172,7 +191,7 @@ export function recommendQuality({ currentLevel = 0, bufferSec = 0, bandwidthKbp
 
   // ──────────────────────────────────────────────────────────────────────────
   // Rule 1: Emergency Downshift (Buffer Starvation Prevention)
-  // If buffer occupancy is below 3.5 seconds, immediately drop quality by 1 level
+  // If buffer occupancy is below 3.5 seconds, immediately drop quality
   // to avoid buffer starvation / stall events.
   // ──────────────────────────────────────────────────────────────────────────
   if (buf < BUFFER_LOW_THRESHOLD && safeCurrentLevel > 0) {
@@ -196,14 +215,8 @@ export function recommendQuality({ currentLevel = 0, bufferSec = 0, bandwidthKbp
   // immediately step down to the highest rendition that satisfies T_safe.
   // ──────────────────────────────────────────────────────────────────────────
   if (currentSpec.bitrateKbps > safeBW && safeCurrentLevel > 0) {
-    // Find the highest sustainable rendition that fits under safeBW
-    let targetLevel = 0;
-    for (let i = safeCurrentLevel - 1; i >= 0; i--) {
-      if (ladder[i].bitrateKbps <= safeBW) {
-        targetLevel = i;
-        break;
-      }
-    }
+    const sustainableLevel = getHighestSustainableLevel(ladder, safeBW);
+    const targetLevel = Math.min(sustainableLevel, safeCurrentLevel - 1);
     const targetSpec = ladder[targetLevel];
     return {
       nextLevel: targetLevel,
@@ -218,42 +231,52 @@ export function recommendQuality({ currentLevel = 0, bufferSec = 0, bandwidthKbp
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Rule 3: Conservative Upshift
-  // If buffer occupancy exceeds 10.0 seconds AND the candidate next rendition's
-  // bitrate is less than or equal to the 75% safe bandwidth threshold.
+  // Rule 3: Intelligent Upshift (Bandwidth + Buffer Health)
+  // If buffer occupancy is stable (>= 4.0s) and bandwidth allows higher quality:
+  // - High bandwidth (>= 5000 Kbps) or very healthy buffer (>= 8.0s):
+  //   Select the highest sustainable rendition directly.
+  // - Moderate bandwidth (< 5000 Kbps) and stable buffer (4.0s - 8.0s):
+  //   Step up gradually (+1 rendition) to protect buffer stability.
   // ──────────────────────────────────────────────────────────────────────────
-  if (buf > BUFFER_HIGH_THRESHOLD && safeCurrentLevel < maxLevel) {
-    const candidate = ladder[safeCurrentLevel + 1];
+  const highestSustainable = getHighestSustainableLevel(ladder, safeBW);
 
-    if (candidate.bitrateKbps <= safeBW) {
-      return {
-        nextLevel: safeCurrentLevel + 1,
-        reason: 'STABLE_BANDWIDTH_UPSHIFT',
-        reasonDetail: `Buffer healthy (${buf.toFixed(1)}s > ${BUFFER_HIGH_THRESHOLD}s) & safe BW (${Math.round(safeBW)} Kbps >= ${candidate.bitrateKbps} Kbps) — upshift to ${candidate.label}`,
-        safeBandwidthKbps: Math.round(safeBW),
-        label: candidate.label,
-        targetSpec: candidate,
-        currentSpec,
-        isSwitch: true
-      };
+  if (highestSustainable > safeCurrentLevel && buf >= BUFFER_UP_THRESHOLD) {
+    let nextLevel;
+    if (buf >= 8.0 || bandwidthKbps >= 5000) {
+      // Abundant bandwidth or very healthy buffer: upgrade directly to highest sustainable level
+      nextLevel = highestSustainable;
+    } else {
+      // Moderate conditions: step up gradually (+1) to prevent buffer drain
+      nextLevel = Math.min(highestSustainable, safeCurrentLevel + 1);
     }
+
+    const candidate = ladder[nextLevel];
+    return {
+      nextLevel,
+      reason: 'STABLE_BANDWIDTH_UPSHIFT',
+      reasonDetail: `Buffer healthy (${buf.toFixed(1)}s >= ${BUFFER_UP_THRESHOLD}s) & safe BW (${Math.round(safeBW)} Kbps >= ${candidate.bitrateKbps} Kbps) — upshift to ${candidate.label}`,
+      safeBandwidthKbps: Math.round(safeBW),
+      label: candidate.label,
+      targetSpec: candidate,
+      currentSpec,
+      isSwitch: true
+    };
   }
 
   // ──────────────────────────────────────────────────────────────────────────
   // Rule 4: Steady State (Hold Current Rendition)
-  // Maintains current quality if buffer is in stable range [3.5s - 10.0s]
-  // or if bandwidth cannot comfortably sustain the next higher rendition.
+  // Maintains current quality if buffer is in steady zone or bandwidth is at capacity.
   // ──────────────────────────────────────────────────────────────────────────
   let steadyReasonDetail;
   if (buf < BUFFER_LOW_THRESHOLD && safeCurrentLevel === 0) {
     steadyReasonDetail = `Buffer critical (${buf.toFixed(1)}s), but already at lowest rendition (${currentSpec.label})`;
-  } else if (buf > BUFFER_HIGH_THRESHOLD && safeCurrentLevel === maxLevel) {
+  } else if (safeCurrentLevel >= maxLevel) {
     steadyReasonDetail = `Buffer optimal (${buf.toFixed(1)}s) — already at peak rendition (${currentSpec.label})`;
-  } else if (buf > BUFFER_HIGH_THRESHOLD && safeCurrentLevel < maxLevel) {
-    const candidate = ladder[safeCurrentLevel + 1];
-    steadyReasonDetail = `Buffer healthy (${buf.toFixed(1)}s), but safe BW (${Math.round(safeBW)} Kbps) < next tier (${candidate.bitrateKbps} Kbps)`;
+  } else if (highestSustainable <= safeCurrentLevel) {
+    const nextCandidate = ladder[Math.min(maxLevel, safeCurrentLevel + 1)];
+    steadyReasonDetail = `Buffer in steady zone (${buf.toFixed(1)}s), but safe BW (${Math.round(safeBW)} Kbps) < next tier (${nextCandidate?.bitrateKbps || '--'} Kbps)`;
   } else {
-    steadyReasonDetail = `Buffer in steady zone (${buf.toFixed(1)}s between ${BUFFER_LOW_THRESHOLD}s and ${BUFFER_HIGH_THRESHOLD}s)`;
+    steadyReasonDetail = `Buffer building (${buf.toFixed(1)}s < ${BUFFER_UP_THRESHOLD}s) — holding ${currentSpec.label} until buffer stabilizes`;
   }
 
   return {
@@ -273,9 +296,11 @@ export default {
   ABR_INTERVAL_MS,
   BUFFER_LOW_THRESHOLD,
   BUFFER_HIGH_THRESHOLD,
+  BUFFER_UP_THRESHOLD,
   BANDWIDTH_SAFETY,
   calculateSafeBandwidth,
   calculateBufferOccupancy,
   mapHlsLevels,
+  getHighestSustainableLevel,
   recommendQuality
 };

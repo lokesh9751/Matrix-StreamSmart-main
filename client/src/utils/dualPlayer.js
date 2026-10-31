@@ -16,6 +16,7 @@ import {
   calculateBufferOccupancy,
   calculateSafeBandwidth,
   mapHlsLevels,
+  getHighestSustainableLevel,
   ABR_INTERVAL_MS
 } from '../algorithms/abrEngine';
 import { logQualitySwitchEvent } from '../services/telemetryService';
@@ -189,7 +190,6 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
   const hls = new Hls({
     startLevel:       -1,
     autoStartLoad:    true,
-    autoLevelEnabled: false,
     loader:           ThrottledLoader,
   });
 
@@ -208,7 +208,6 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
     selectedQualityIndex = highest;
     hls.currentLevel     = highest;
     hls.loadLevel        = highest;
-    hls.autoLevelEnabled = false;
 
     console.log(`[Baseline] Locked to highest level ${highest}:`, hls.levels[highest]);
     videoEl.play().catch(e => console.warn('[Baseline] Autoplay caught:', e.message));
@@ -279,6 +278,7 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
       }
     },
     updateNetworkConfig(newConfig) {
+      if (!newConfig) return;
       currentNetConfig = { ...currentNetConfig, ...newConfig };
     },
     setQuality(levelIndex) {
@@ -288,7 +288,6 @@ export function createBaselinePlayer({ videoEl, src, fallbackMp4Url, networkConf
       hls.currentLevel     = target;
       hls.loadLevel        = target;
       hls.nextLevel        = target;
-      hls.autoLevelEnabled = false;
       console.log(`[Baseline] Fixed quality locked to level ${target} (${hls.levels[target]?.height || '--'}p):`, hls.levels[target]);
     }
   };
@@ -364,9 +363,8 @@ export function createOptimizedPlayer({
   const ThrottledLoader = createThrottledLoaderClass(() => currentNetConfig, trackerRef);
 
   const hls = new Hls({
-    startLevel:       0,     // Start at lowest rendition for rapid TTFF
+    startLevel:       -1,    // Determined dynamically upon manifest parsing
     autoStartLoad:    true,
-    autoLevelEnabled: false, // Ensure built-in HLS.js ABR is replaced by custom engine
     loader:           ThrottledLoader,
   });
 
@@ -394,7 +392,7 @@ export function createOptimizedPlayer({
     const safeBw = calculateSafeBandwidth(availableBw);
 
     const hlsBwEstimate = tracker?.getMetrics()?.downloadBandwidthKbps || Math.round((hls.bandwidthEstimate || 0) / 1000);
-    const activeLevelIndex = hls.currentLevel >= 0 ? hls.currentLevel : currentTargetLevel;
+    const activeLevelIndex = currentTargetLevel;
 
     // 3. Handle manual quality override
     if (!isAutoMode) {
@@ -413,11 +411,6 @@ export function createOptimizedPlayer({
         });
       }
       return;
-    }
-
-    // Keep built-in HLS.js autoLevel disabled so custom algorithm drives levels
-    if (hls.autoLevelEnabled) {
-      hls.autoLevelEnabled = false;
     }
 
     // 4. Evaluate Custom ABR Decision Heuristic
@@ -439,7 +432,7 @@ export function createOptimizedPlayer({
         estimatedBandwidthKbps: hlsBwEstimate,
         simulatedBandwidthKbps: simBw,
         isAuto: true,
-        currentLevelIndex: activeLevelIndex,
+        currentLevelIndex: currentTargetLevel,
         recommendedLevelIndex: recommendation.nextLevel
       });
     }
@@ -454,15 +447,17 @@ export function createOptimizedPlayer({
         `[Optimized ABR] ${recommendation.reason}: ${fromSpec.label} → ${toSpec.label} | Buffer: ${buffer.toFixed(1)}s | Safe BW: ${Math.round(safeBw)}Kbps`
       );
 
-      // Smooth switch at fragment boundary
-      hls.nextLevel = recommendation.nextLevel;
+      currentTargetLevel = recommendation.nextLevel;
 
       // Emergency buffer depletion or severe bandwidth drop: switch immediately to avoid stall
       if (recommendation.reason === 'BUFFER_RISK_DOWNSHIFT' || recommendation.reason === 'BANDWIDTH_LIMIT') {
         hls.currentLevel = recommendation.nextLevel;
+        hls.loadLevel    = recommendation.nextLevel;
+      } else {
+        // Smooth switch at fragment boundary
+        hls.nextLevel    = recommendation.nextLevel;
+        hls.loadLevel    = recommendation.nextLevel;
       }
-
-      currentTargetLevel = recommendation.nextLevel;
 
       const elapsedSec = (Date.now() - startTime) / 1000;
       const switchData = {
@@ -471,6 +466,7 @@ export function createOptimizedPlayer({
         elapsedSec: parseFloat(elapsedSec.toFixed(1)),
         fromLevel: fromSpec.label,
         toLevel: toSpec.label,
+        toLevelIndex: recommendation.nextLevel,
         reason: recommendation.reason,
         reasonDetail: recommendation.reasonDetail,
         bufferSec: parseFloat(buffer.toFixed(1)),
@@ -497,20 +493,34 @@ export function createOptimizedPlayer({
   }
 
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    // Start at lowest level for fastest initial Time to First Frame (TTFF)
-    hls.currentLevel     = 0;
-    currentTargetLevel   = 0;
-    hls.autoLevelEnabled = false;
+    const ladder = mapHlsLevels(hls.levels);
+    const simBw = parseFloat(currentNetConfig?.bandwidthKbps) || 4500;
+    const safeBw = calculateSafeBandwidth(simBw);
+
+    // Select initial sustainable level based on configured available bandwidth
+    const initialLevel = getHighestSustainableLevel(ladder, safeBw);
+    currentTargetLevel   = initialLevel;
+    hls.currentLevel     = initialLevel;
+    hls.loadLevel        = initialLevel;
 
     // Run custom ABR decision loop every 1500 ms
     if (abrInterval) clearInterval(abrInterval);
     abrInterval = setInterval(runABRTick, ABR_INTERVAL_MS);
 
-    console.log('[Optimized] Manifest parsed – custom ABR controller active');
+    console.log(`[Optimized] Manifest parsed – initial level ${initialLevel} (${ladder[initialLevel]?.label}):`, hls.levels[initialLevel]);
     videoEl.play().catch(e => console.warn('[Optimized] Autoplay caught:', e.message));
 
     if (onLevels && hls.levels) {
       onLevels(hls.levels);
+    }
+  });
+
+  hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+    if (data && typeof data.level === 'number' && data.level >= 0) {
+      console.log(`[Optimized] HLS.js Level Switched to level ${data.level} (${hls.levels?.[data.level]?.height || '--'}p)`);
+      if (isAutoMode) {
+        currentTargetLevel = data.level;
+      }
     }
   });
 
@@ -578,22 +588,33 @@ export function createOptimizedPlayer({
       }
     },
     updateNetworkConfig(newConfig) {
+      if (!newConfig) return;
       currentNetConfig = { ...currentNetConfig, ...newConfig };
+      if (hls && hls.levels && hls.levels.length > 0) {
+        if (typeof newConfig.maxQualityLevel === 'number') {
+          hls.autoLevelCapping = newConfig.maxQualityLevel;
+        }
+        if (isAutoMode) {
+          runABRTick();
+        }
+      }
     },
+    getCurrentLevel: () => currentTargetLevel,
     setQuality(levelIndex) {
       if (!hls || !hls.levels) return;
       if (levelIndex === -1) {
         isAutoMode = true;
-        hls.autoLevelEnabled = false;
+        // In HLS.js, setting currentLevel = -1 returns to automatic ABR selection
+        hls.currentLevel = -1;
         console.log('[Optimized] Restored Auto mode (Custom ABR active)');
+        runABRTick();
       } else {
         isAutoMode = false;
         const target = Math.max(0, Math.min(levelIndex, hls.levels.length - 1));
-        currentTargetLevel = target;
-        hls.currentLevel   = target;
-        hls.loadLevel      = target;
-        hls.nextLevel      = target;
-        hls.autoLevelEnabled = false;
+        currentTargetLevel   = target;
+        hls.currentLevel     = target;
+        hls.loadLevel        = target;
+        hls.nextLevel        = target;
         console.log(`[Optimized] Manual quality override to level ${target} (${hls.levels[target]?.height || '--'}p):`, hls.levels[target]);
       }
     }

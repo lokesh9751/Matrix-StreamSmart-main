@@ -2237,3 +2237,164 @@ select.form-control {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* ── 34. Streaming Workbench – Responsive Benchmark Controls ──────── */
+.benchmark-controls-card {
+  margin-top: 16px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.benchmark-controls-card .card-header {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.benchmark-buttons-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.benchmark-actions-group {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.benchmark-action-btn {
+  flex: 1 1 0%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  height: 42px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.benchmark-action-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.benchmark-action-btn svg {
+  flex-shrink: 0;
+}
+
+.benchmark-action-btn-start {
+  background: var(--primary-purple);
+  color: #FFFFFF;
+  border-color: var(--primary-purple);
+  box-shadow: 0 2px 6px rgba(112, 96, 181, 0.25);
+}
+
+.benchmark-action-btn-start:hover:not(:disabled) {
+  background: var(--deep-purple);
+  border-color: var(--deep-purple);
+  color: #FFFFFF;
+}
+
+.benchmark-action-btn-start:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.benchmark-action-btn-stop {
+  background: var(--error);
+  color: #FFFFFF;
+  border-color: var(--error);
+}
+
+.benchmark-action-btn-stop:hover:not(:disabled) {
+  background: #B91C1C;
+  border-color: #B91C1C;
+  color: #FFFFFF;
+}
+
+.benchmark-action-btn-stop:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.benchmark-reset-btn {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+}
+
+.workbench-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Tablet adjustments (<= 1024px) */
+@media (max-width: 1024px) {
+  .benchmark-action-btn {
+    padding: 9px 6px;
+    font-size: 12.5px;
+    gap: 5px;
+  }
+  .benchmark-action-btn span {
+    font-size: 12.5px;
+  }
+}
+
+/* Mobile adjustments (<= 640px) */
+@media (max-width: 640px) {
+  .workbench-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Small mobile stacking (<= 480px or when container is narrow) */
+@media (max-width: 480px) {
+  .benchmark-actions-group {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .benchmark-action-btn {
+    width: 100%;
+    flex: 1 1 100%;
+    height: 44px;
+    font-size: 13.5px;
+  }
+  .benchmark-action-btn span {
+    font-size: 13.5px;
+  }
+}
